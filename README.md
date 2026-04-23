@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LiftLog - Mobile Gym Tracker
 
-## Getting Started
+LiftLog is a mobile-first gym tracker built with Next.js and shadcn/ui.
 
-First, run the development server:
+Core functionality:
+- Camera recognizer that suggests likely exercise + weight from an image using OpenAI Vision.
+- Chat interface that parses natural text into variable sets/reps/weights.
+- Split layout for current workout and chat input.
+- One-tap quick chips for common rep and weight values.
+- Workout grouping with flexible per-set variability.
+
+## Tech Stack
+
+- Next.js App Router + TypeScript
+- shadcn/ui + Tailwind CSS
+- Supabase Postgres + Supabase Auth (RLS)
+- OpenAI API (vision + chat parsing)
+- React Query for async state
+
+## Setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Copy env file and configure values:
+
+```bash
+cp .env.example .env
+```
+
+3. Provision Supabase:
+
+```bash
+# create a Supabase project, then set:
+# - NEXT_PUBLIC_SUPABASE_URL
+# - NEXT_PUBLIC_SUPABASE_ANON_KEY
+```
+
+4. Apply SQL migration to Supabase:
+
+```bash
+# run the SQL in:
+# supabase/migrations/20260423193000_init.sql
+```
+
+5. Run development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Available Scripts
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `npm run dev` - start dev server
+- `npm run lint` - run ESLint
+- `npm run test` - run unit tests
+- `npm run build` - production build validation
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## API Endpoints
 
-## Learn More
+- `POST /api/vision/recognize` - image analysis to ranked exercise/weight candidates
+- `POST /api/chat` - natural language workout parsing and suggestion output
+- `GET /api/workouts` - list recent workout groups/sessions
+- `POST /api/workouts` - create workout group and active session
+- `POST /api/sets` - log one or multiple set entries
 
-To learn more about Next.js, take a look at the following resources:
+## Notes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- If `OPENAI_API_KEY` is missing, chat and camera routes fall back to deterministic local parsing/candidates.
+- During image recognition, the app always requires user confirmation before logging.
+- Workout/set/vision routes require a Supabase bearer token; the client auto-creates an anonymous session when needed.

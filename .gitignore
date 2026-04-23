@@ -20,6 +20,9 @@
 # production
 /build
 
+# editor
+.cursor/
+
 # misc
 .DS_Store
 *.pem
@@ -36,6 +39,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Supabase CLI local cache (linked project, versions)
+supabase/.temp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/lib/generated/prisma
