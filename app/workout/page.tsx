@@ -54,6 +54,13 @@ import {
   parseWarmupHints,
 } from "@/lib/warmup-hints";
 import {
+  formatLoadIncrement,
+  oneRmKgToDisplayUnit,
+  quickAddIncrement,
+  rpeChipsRoundIncrement,
+  weightLoadIncrement,
+} from "@/lib/weight-increments";
+import {
   flattenSets,
   formatWorkoutTitle,
   groupByExercise,
@@ -621,12 +628,10 @@ export default function Home() {
         .flatMap((block) => block.sets),
     [blocks],
   );
-  // `lastSet` feeds the quick-action chips (Same again, +5kg, etc.), so it
-  // must refer to the last set of the *active* exercise — not the last set
-  // across the whole session. Otherwise clicking "+5kg" on a fresh exercise
-  // would base the delta off a previous exercise's weight (e.g. tapping
-  // "+5kg" after switching from Bench to Dips would add 5 to the Bench
-  // weight instead of starting Dips at 0 or its own baseline).
+  // `lastSet` drives quick weight chips; it must be the last set of the
+  // *active* exercise — not the last set across the whole session. Otherwise
+  // increment suggestions would use another exercise's weight after switching
+  // blocks (e.g. Dips would still "see" Bench numbers).
   const activeBlockLastSet =
     activeBlock && activeBlock.sets.length > 0
       ? activeBlock.sets[activeBlock.sets.length - 1]
@@ -842,6 +847,23 @@ export default function Home() {
           queryClient.invalidateQueries({ queryKey: ["workouts"] }),
         );
     }
+  }
+
+  async function duplicateSetInBlock(blockId: string, setId: string) {
+    const block = blocksRef.current[blockId];
+    if (!block) return;
+    const target = block.sets.find((entry) => entry.id === setId);
+    if (!target) return;
+    if (target.reps === null && target.weight === null) return;
+    await addSetToBlock(blockId, {
+      reps: target.reps,
+      weight: target.weight,
+      weightUnit: target.weightUnit,
+      source: "manual",
+      rpe: target.rpe ?? null,
+      rir: target.rir ?? null,
+      feel: target.feel ?? null,
+    });
   }
 
   async function addSetToBlock(
@@ -1843,33 +1865,39 @@ export default function Home() {
     }
   }
 
-  async function handleSameAgain() {
-    await runChipAction(async () => {
-      const activeId = activeBlockIdRef.current;
-      if (!activeId) return;
-      const last = readActiveLastSet() ?? lastSet;
-      if (!last) return;
-      await addSetToBlock(activeId, {
-        reps: last.reps,
-        weight: last.weight,
-        weightUnit: last.weightUnit,
-        source: "manual",
-      });
-    });
-  }
-
-  async function handleAdjustWeight(delta: number) {
+  /**
+   * Adds a set with weight stepped by a bar jump derived from **estimated
+   * 1RM** (not the last set). Re-reads the last set for the start weight
+   * and the block for a fresh 1RM from `getEstimatedOneRmKgForSlug` at tap time.
+   */
+  async function handleWeightLoadInDirection(direction: 1 | -1) {
     await runChipAction(async () => {
       const activeId = activeBlockIdRef.current;
       if (!activeId) return;
       const last = readActiveLastSet();
       const baseWeight = last?.weight;
       if (baseWeight === null || baseWeight === undefined) return;
-      const nextWeight = Math.max(0, baseWeight + delta);
+      const unit = last?.weightUnit ?? lastWeightUnit;
+      const block = blocksRef.current[activeId];
+      const oneRmKg = getEstimatedOneRmKgForSlug(block?.exercise.slug);
+      const oneRmInUnit =
+        oneRmKg != null && oneRmKg > 0
+          ? oneRmKgToDisplayUnit(oneRmKg, unit)
+          : null;
+      const fullInc =
+        oneRmInUnit != null
+          ? weightLoadIncrement(oneRmInUnit, unit)
+          : weightLoadIncrement(0, unit);
+      const inc =
+        direction === 1
+          ? quickAddIncrement(oneRmInUnit, baseWeight, unit, fullInc)
+          : fullInc;
+      const raw = baseWeight + direction * inc;
+      const nextWeight = Math.max(0, Math.round(raw * 4) / 4);
       await addSetToBlock(activeId, {
         reps: last?.reps ?? null,
         weight: nextWeight,
-        weightUnit: last?.weightUnit ?? lastWeightUnit,
+        weightUnit: unit,
         source: "manual",
       });
     });
@@ -1952,29 +1980,52 @@ export default function Home() {
     [activeExercise, historyQuery.data, blocks, getEstimatedOneRmKgForSlug],
   );
 
-  // Two separate chip groups so we can drop the "estimated Xkg 1RM …"
-  // caption between them — the basic chips (same-again, ±5) and the
-  // RPE-calibrated rep × weight suggestions, which need context.
+  // Basic chips: + uses a possibly reduced step near 1RM; − is always the
+  // full tier step from `weightLoadIncrement`. RPE chips: `rpeChipsRoundIncrement`.
   const basicChips = useMemo(() => {
     if (!activeExercise) return [];
 
     const chips: Array<{ label: string; onClick: () => void; disabled?: boolean }> = [];
 
-    if (lastSet && lastSet.reps !== null && lastSet.weight !== null) {
+    if (
+      lastSet?.weight !== undefined &&
+      lastSet?.weight !== null &&
+      lastSet.weight > 0
+    ) {
+      const u = lastWeightUnit;
+      const oneRmInUnit =
+        activeExerciseOneRmKg != null && activeExerciseOneRmKg > 0
+          ? oneRmKgToDisplayUnit(activeExerciseOneRmKg, u)
+          : null;
+      const fullInc =
+        oneRmInUnit != null
+          ? weightLoadIncrement(oneRmInUnit, u)
+          : weightLoadIncrement(0, u);
+      const incUp = quickAddIncrement(
+        oneRmInUnit,
+        lastSet.weight,
+        u,
+        fullInc,
+      );
+      const incLabelUp = formatLoadIncrement(incUp);
+      const incLabelDown = formatLoadIncrement(fullInc);
       chips.push({
-        label: `Same again · ${lastSet.reps}×${lastSet.weight}${lastWeightUnit}`,
-        onClick: handleSameAgain,
+        label: `+${incLabelUp}${u}`,
+        onClick: () => {
+          void handleWeightLoadInDirection(1);
+        },
       });
-    }
-
-    if (lastSet?.weight !== undefined && lastSet?.weight !== null) {
-      chips.push({ label: `+5${lastWeightUnit}`, onClick: () => handleAdjustWeight(5) });
-      chips.push({ label: `-5${lastWeightUnit}`, onClick: () => handleAdjustWeight(-5) });
+      chips.push({
+        label: `-${incLabelDown}${u}`,
+        onClick: () => {
+          void handleWeightLoadInDirection(-1);
+        },
+      });
     }
 
     return chips;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeExercise, lastSet, lastWeightUnit]);
+  }, [activeExercise, lastSet, lastWeightUnit, activeExerciseOneRmKg]);
 
   // Combined (reps × weight) suggestions calibrated to ~8/10 effort
   // (RPE 8, roughly 2 reps in reserve). For a target of N reps at RPE 8
@@ -1984,11 +2035,16 @@ export default function Home() {
     if (!activeExercise || activeExerciseOneRmKg === null) return [];
 
     const chips: Array<{ label: string; onClick: () => void; disabled?: boolean }> = [];
-    const oneRmInUnit =
-      lastWeightUnit === "lb"
-        ? activeExerciseOneRmKg / 0.45359237
-        : activeExerciseOneRmKg;
-    const increment = 5;
+    const oneRmInUnit = oneRmKgToDisplayUnit(
+      activeExerciseOneRmKg,
+      lastWeightUnit,
+    );
+    const fullInc = weightLoadIncrement(oneRmInUnit, lastWeightUnit);
+    const increment = rpeChipsRoundIncrement(
+      oneRmInUnit,
+      lastWeightUnit,
+      fullInc,
+    );
     const repsInReserveForRpe8 = 2;
     for (const targetReps of [1, 3, 5, 8, 10]) {
       const pct = percentageOfOneRm(targetReps + repsInReserveForRpe8);
@@ -2150,6 +2206,12 @@ export default function Home() {
               if (!block) return null;
               const isCollapsed = collapsedBlockIds.has(block.id);
               const isDeleted = Boolean(block.deleted);
+
+              const suggestionsFooterContent =
+                hasAnyChip && activeBlockId === block.id && !isDeleted ? (
+                  <SuggestionChips chips={[...basicChips, ...rpeChips]} />
+                ) : null;
+
               if (isCollapsed && !isDeleted) {
                 const useSticky = nonDeletedExerciseCount > 1;
                 const stickyTop = stickyTopByBlockId.get(block.id) ?? 0;
@@ -2170,6 +2232,7 @@ export default function Home() {
                       sticky={useSticky}
                       onToggle={() => toggleBlockCollapsed(block.id)}
                       onDelete={() => removeBlock(block.id)}
+                      suggestionsFooter={suggestionsFooterContent}
                     />
                   </ExerciseBlockStickyFrame>
                 );
@@ -2203,7 +2266,13 @@ export default function Home() {
                     active={block.id === activeBlockId}
                     onToggle={() => toggleBlockCollapsed(block.id)}
                     onDeleteSet={(setId) => removeSetFromBlock(block.id, setId)}
+                    onDuplicateSet={(setId) => {
+                      void runChipAction(() =>
+                        duplicateSetInBlock(block.id, setId),
+                      );
+                    }}
                     onDelete={() => removeBlock(block.id)}
+                    suggestionsFooter={suggestionsFooterContent}
                   />
                 </ExerciseBlockStickyFrame>
               );
@@ -2295,31 +2364,9 @@ export default function Home() {
       </div>
 
       <footer
-        className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/90 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] backdrop-blur sm:px-6"
+        className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-6"
       >
-        <div className="mx-auto flex w-full flex-col gap-1.5 px-1">
-          {hasAnyChip ? (
-            <>
-              {rpeChips.length > 0 && activeExerciseOneRmKg !== null ? (
-                <p className="px-1 text-[11px] leading-snug text-muted-foreground">
-                  <span className="font-semibold text-foreground">
-                    {activeExercise?.name ?? "This lift"}
-                  </span>{" "}
-                  · estimated{" "}
-                  <span className="font-medium text-foreground/80">
-                    {Math.round(
-                      lastWeightUnit === "lb"
-                        ? activeExerciseOneRmKg / 0.45359237
-                        : activeExerciseOneRmKg,
-                    )}
-                    {lastWeightUnit} 1RM
-                  </span>{" "}
-                  · reps × weight suggestions at ~8/10 effort (2 RIR).
-                </p>
-              ) : null}
-              <SuggestionChips chips={[...basicChips, ...rpeChips]} />
-            </>
-          ) : null}
+        <div className="pointer-events-auto mx-auto flex w-full min-w-0 max-w-full flex-col gap-1.5 px-1">
           <Composer
             onSubmit={handleChatSubmit}
             cameraTrigger={cameraTrigger}

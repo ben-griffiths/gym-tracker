@@ -56,7 +56,7 @@ export function Composer({
     <form
       onSubmit={handleSubmit}
       className={cn(
-        "flex items-center gap-2 rounded-full border bg-muted/40 p-1.5 pl-2 shadow-sm backdrop-blur",
+        "flex items-center gap-2 rounded-full border border-border/80 bg-background/95 p-1.5 pl-2 shadow-md shadow-black/5 backdrop-blur-md",
         "transition-colors focus-within:bg-background",
       )}
     >

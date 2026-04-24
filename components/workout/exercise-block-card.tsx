@@ -1,7 +1,15 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Image from "next/image";
-import { ChevronDown, ChevronUp, HelpCircle, Trash2, Undo2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  CopyPlus,
+  HelpCircle,
+  Trash2,
+  Undo2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EffortFeel, ExerciseRecord } from "@/lib/types/workout";
 import { ExerciseGuideSheet } from "@/components/workout/exercise-guide-sheet";
@@ -45,9 +53,16 @@ type ExerciseBlockCardProps = {
   sticky?: boolean;
   onToggle?: () => void;
   onDeleteSet?: (setId: string) => void;
+  /** Appends a new set with the same reps, weight, and effort as this row. */
+  onDuplicateSet?: (setId: string) => void;
   onDelete?: () => void;
   deleted?: boolean;
   onRestore?: () => void;
+  /**
+   * Shown as a border-separated footer inside the card (e.g. rep/weight
+   * suggestion chips for the active exercise in the workout chat).
+   */
+  suggestionsFooter?: ReactNode;
 };
 
 function formatSet(set: BlockSet) {
@@ -98,9 +113,11 @@ export function ExerciseBlockCard({
   sticky,
   onToggle,
   onDeleteSet,
+  onDuplicateSet,
   onDelete,
   deleted,
   onRestore,
+  suggestionsFooter,
 }: ExerciseBlockCardProps) {
   const summaryParts: string[] = [];
   if (deleted) {
@@ -120,6 +137,7 @@ export function ExerciseBlockCard({
   const showGuide = !deleted && Boolean(exercise.guide);
   const showDelete = !deleted && Boolean(onDelete);
   const showSetDelete = !deleted && Boolean(onDeleteSet);
+  const showSetDuplicate = !deleted && Boolean(onDuplicateSet);
 
   return (
     <div
@@ -279,21 +297,50 @@ export function ExerciseBlockCard({
                       </span>
                     ) : null}
                   </span>
-                  {showSetDelete && onDeleteSet ? (
-                    <button
-                      type="button"
-                      onClick={() => onDeleteSet(set.id)}
-                      aria-label={`Delete set ${set.setNumber}`}
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                  {showSetDuplicate || (showSetDelete && onDeleteSet) ? (
+                    <span className="inline-flex shrink-0 items-center gap-0.5">
+                      {showSetDuplicate && onDuplicateSet ? (
+                        <button
+                          type="button"
+                          onClick={() => onDuplicateSet(set.id)}
+                          disabled={set.reps === null && set.weight === null}
+                          title="Duplicate this set"
+                          aria-label={`Duplicate set ${set.setNumber}`}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <CopyPlus className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                      {showSetDelete && onDeleteSet ? (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteSet(set.id)}
+                          aria-label={`Delete set ${set.setNumber}`}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                    </span>
                   ) : null}
                 </li>
               );
             })}
           </ul>
         )
+      ) : null}
+
+      {!collapsed && suggestionsFooter ? (
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 items-center border-t px-1 py-1.5",
+            !deleted && (active
+              ? "border-primary/20 bg-card"
+              : "border-border/70 bg-card"),
+          )}
+        >
+          {suggestionsFooter}
+        </div>
       ) : null}
     </div>
   );
