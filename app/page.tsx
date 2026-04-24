@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowRight, Dumbbell, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, Dumbbell, Pencil, Trash2 } from "lucide-react";
+import { StartWorkoutFab } from "@/components/home/start-workout-fab";
 import { Badge } from "@/components/ui/badge";
 import { deleteWorkoutSession } from "@/lib/api";
 import { getExerciseBySlug } from "@/lib/exercises";
@@ -339,17 +340,7 @@ export default function HomePage() {
         </div>
       </main>
 
-      {/* Floating "Start workout" action. Pinned with fixed + bottom-nav-safe
-          padding so it hovers above the list on every screen size. */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-20 flex justify-center px-4 pb-8 sm:px-6">
-        <Link
-          href="/workout"
-          className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3.5 text-sm font-semibold text-primary-foreground shadow-[0_10px_30px_-10px_rgba(0,0,0,0.45)] ring-1 ring-primary/20 transition-transform hover:scale-[1.02] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Plus className="h-4 w-4" />
-          Start workout
-        </Link>
-      </div>
+      <StartWorkoutFab />
     </div>
   );
 }
