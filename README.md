@@ -55,6 +55,15 @@ cp .env.example .env
 npm run dev
 ```
 
+## Progressive Web App (LiftLog)
+
+LiftLog ships as an **installable PWA** ([Next.js PWA guide](https://nextjs.org/docs/app/guides/progressive-web-apps)): [`app/manifest.ts`](app/manifest.ts), icons under [`public/`](public/), and [`app/icon.png`](app/icon.png) / [`app/apple-icon.png`](app/apple-icon.png) for the tab and “Add to Home Screen” artwork.
+
+- **Production:** the app must be served over **HTTPS** (e.g. Vercel) for browsers to offer install / add to home screen.
+- **Local install testing:** run `npx next dev --experimental-https` so the secure context matches what install prompts expect.
+
+On the home page, a dismissible hint explains **Share → Add to Home Screen** on iOS; it stays hidden when already running in standalone mode.
+
 ## Available Scripts
 
 - `npm run dev` - start dev server
