@@ -157,7 +157,7 @@ export const CHAT_TOOLS = [
         sets: {
           type: "array",
           description:
-            "The sets to append. Expand NxM shorthand into N entries (e.g. '5x5 100kg' ⇒ 5 entries). Leave reps/weight null when unspecified; leave effort fields out entirely unless the user mentioned them.",
+            "The sets to append. Expand NxM shorthand into N entries (e.g. '5x5 100kg' ⇒ 5 entries). If the user lists several exercises with only a weight each and no reps in one message (e.g. '120kg bench, 200kg deadlift'), that is 1 rep per set — set reps:1 for every such set. Otherwise leave reps/weight null when unspecified; leave effort fields out unless the user mentioned them.",
           items: {
             type: "object",
             properties: {
@@ -334,6 +334,7 @@ export function buildSystemPrompt(): string {
     "- Every exercise you reference must come from the catalog below. If the user's word doesn't match a catalog slug, resolve it via the most common abbreviation (bench⇒bench-press, OHP/overhead press⇒shoulder-press, dead/deads⇒deadlift, squat⇒squat).",
     "- NEVER invent an exercise. If you genuinely can't resolve it, DO NOT call log_sets — call `reply` asking which exercise.",
     "- Multi-exercise messages ⇒ call `log_sets` ONCE PER exercise, each with that exercise's own sets.",
+    "- A comma- or 'and'-separated list of only weight+exercise and NO rep count in one user message (e.g. '120kg bench, 200kg dead, 160kg squat', '75kg OHP and 200kg deadlift') is a list of single heavy entries: one set per part with `reps: 1` and the given weight+weightUnit. Do not leave reps null for those.",
     "- NxM shorthand is ALWAYS N sets of M reps (10x10 ⇒ 10 sets of 10 reps, never 2 sets).",
     "- '5 sets at 20kg' with a prior 5-rep set in context ⇒ 5 entries with reps=5 (inherited) weight=20.",
     "- '100k' is shorthand for 100kg.",
@@ -494,6 +495,31 @@ function parseToolCalls(calls: ToolCall[]): ParsedCalls {
   return parsed;
 }
 
+/**
+ * When a single turn lists 2+ exercises with only weights and no reps, treat
+ * each set as 1 rep (e.g. reference / max numbers the user is quoting).
+ */
+function defaultRepsForMultiExerciseWeightOnlyRows(
+  logSets: z.infer<typeof logSetsArgs>[],
+): z.infer<typeof logSetsArgs>[] {
+  if (logSets.length < 2) return logSets;
+  const everySetHasWeight = logSets.every(
+    (call) =>
+      call.sets.length > 0 && call.sets.every((s) => s.weight !== null),
+  );
+  if (!everySetHasWeight) return logSets;
+  const everyRepsNull = logSets.every((call) =>
+    call.sets.every((s) => s.reps === null),
+  );
+  if (!everyRepsNull) return logSets;
+  return logSets.map((call) => ({
+    ...call,
+    sets: call.sets.map((s) =>
+      s.reps === null && s.weight !== null ? { ...s, reps: 1 } : s,
+    ),
+  }));
+}
+
 function normaliseAppendSets(
   raw: z.infer<typeof setSchema>[],
 ): SetDetail[] {
@@ -523,6 +549,7 @@ function mapUpdate(update: z.infer<typeof updateSetsArgs>): SetUpdate {
 export function assembleSuggestion(input: AssembleInput): ChatSetSuggestion {
   const { message, context, toolCalls, fallback } = input;
   const parsed = parseToolCalls(toolCalls);
+  parsed.logSets = defaultRepsForMultiExerciseWeightOnlyRows(parsed.logSets);
 
   // --- Logging (log_sets calls, one per exercise) --------------------
   type ResolvedLogCall = {

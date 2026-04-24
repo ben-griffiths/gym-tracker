@@ -114,7 +114,7 @@ const SEED_MESSAGES: Message[] = [
     id: "seed-1",
     kind: "text",
     role: "assistant",
-    text: "Hey. Tell me what exercise you're doing (or snap a pic). You can add sets one at a time — just send reps or weight.",
+    text: "Hey. Log old lifts so suggestions match your training — or track a current workout: name a lift, log sets with reps and weight, or use the camera on equipment.",
   },
 ];
 

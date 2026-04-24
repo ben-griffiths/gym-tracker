@@ -2,12 +2,14 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowRight, Dumbbell, Pencil, Trash2 } from "lucide-react";
+import { ArrowRight, Dumbbell, Pencil, Trash2, X } from "lucide-react";
 import { StartWorkoutFab } from "@/components/home/start-workout-fab";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { deleteWorkoutSession } from "@/lib/api";
 import { getExerciseBySlug } from "@/lib/exercises";
 import {
@@ -26,6 +28,12 @@ import {
 
 export default function HomePage() {
   const queryClient = useQueryClient();
+  /** Session-only: hidden after dismiss until the next full page load. */
+  const [maxesHintVisible, setMaxesHintVisible] = useState(true);
+
+  function dismissMaxesHint() {
+    setMaxesHintVisible(false);
+  }
 
   const historyQuery = useQuery<HistoryResponse>({
     queryKey: ["workouts"],
@@ -257,15 +265,42 @@ export default function HomePage() {
               ))}
             </div>
           ) : isEmpty ? (
-            <div className="flex flex-col items-center gap-3 rounded-3xl border border-dashed bg-card/40 px-6 py-12 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-                <Dumbbell className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-sm font-medium">No workouts yet</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Tap the button below to start logging your first session.
-                </p>
+            <div className="flex flex-col gap-4">
+              {maxesHintVisible ? (
+                <section
+                  className={cn(
+                    "relative rounded-2xl border p-3 shadow-sm sm:p-4",
+                    "border-amber-200/90 bg-amber-50/95",
+                    "dark:border-amber-800/50 dark:bg-amber-950/40",
+                  )}
+                >
+                  <p className="min-w-0 pr-8 text-sm leading-tight text-amber-950/90 sm:pr-9 sm:text-base dark:text-amber-50/95">
+                    Start a workout and log past sets — weight and rep ideas
+                    match your strength better.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={dismissMaxesHint}
+                    className="absolute top-1.5 right-1.5 z-10 text-amber-800/70 hover:bg-amber-900/10 hover:text-amber-950 sm:top-2 sm:right-2 dark:text-amber-200/80 dark:hover:bg-amber-100/10 dark:hover:text-amber-50"
+                    aria-label="Dismiss hint"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </section>
+              ) : null}
+
+              <div className="flex flex-col items-center gap-3 rounded-3xl border border-dashed bg-card/40 px-5 py-9 text-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                  <Dumbbell className="h-4 w-4" />
+                </div>
+                <div className="max-w-sm">
+                  <p className="text-sm font-medium">No workouts yet</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                    Sessions you log will list here. Tap + below to start.
+                  </p>
+                </div>
               </div>
             </div>
           ) : (
