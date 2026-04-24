@@ -21,7 +21,6 @@ export type BlockSet = {
 
 function formatRpeLabel(rpe: number | null | undefined): string | null {
   if (rpe === null || rpe === undefined) return null;
-  // Render whole numbers without a trailing ".0" (e.g. "RPE 8" not "RPE 8.0").
   const value = Number.isInteger(rpe) ? String(rpe) : rpe.toFixed(1);
   return `RPE ${value}`;
 }
@@ -42,8 +41,9 @@ type ExerciseBlockCardProps = {
   sets: BlockSet[];
   active?: boolean;
   collapsed?: boolean;
-  onToggle?: () => void;
+  /** Set when the card sits in the sticky exercise header stack (collapsed rows). */
   sticky?: boolean;
+  onToggle?: () => void;
   onDeleteSet?: (setId: string) => void;
   onDelete?: () => void;
   deleted?: boolean;
@@ -95,8 +95,8 @@ export function ExerciseBlockCard({
   sets,
   active,
   collapsed,
-  onToggle,
   sticky,
+  onToggle,
   onDeleteSet,
   onDelete,
   deleted,
@@ -124,18 +124,25 @@ export function ExerciseBlockCard({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-3xl border bg-card shadow-sm transition-shadow",
-        active && !collapsed && !deleted && "ring-2 ring-primary/40",
+        "overflow-hidden rounded-3xl shadow-sm transition-shadow",
+        deleted && "border border-dashed bg-muted/30 shadow-none",
+        !deleted &&
+          (active && !collapsed
+            ? "border-2 border-primary/50 bg-card"
+            : "border border-border bg-card"),
         sticky && !deleted && "shadow-md",
-        deleted && "border-dashed bg-muted/30 shadow-none",
       )}
       data-block-card
       data-deleted={deleted ? "true" : undefined}
     >
       <div
         className={cn(
-          "flex w-full items-center gap-1 border-b bg-muted/40 pr-4 transition-colors",
-          collapsed && "border-b-transparent",
+          "flex w-full items-center gap-1 pr-4 transition-colors",
+          collapsed
+            ? "border-b border-b-transparent bg-muted/40"
+            : active && !deleted
+              ? "border-b border-primary/25 bg-transparent"
+              : "border-b border-border bg-card",
         )}
       >
         <button

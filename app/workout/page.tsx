@@ -1,9 +1,11 @@
 "use client";
 
 import {
+  type ComponentProps,
   ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -146,6 +148,59 @@ function visionResponseDescriptionText(
   return parts.join("\n\n");
 }
 
+/** Renders the exercise block wrapper; measures full height for cumulative sticky `top` offsets. */
+function ExerciseBlockStickyFrame({
+  blockId,
+  useSticky,
+  stickyTop,
+  onHeight,
+  children,
+  className: classNameProp,
+  style: styleProp,
+  ...rest
+}: {
+  blockId: string;
+  useSticky: boolean;
+  stickyTop: number;
+  onHeight: (id: string, h: number) => void;
+  children: ReactNode;
+} & Omit<ComponentProps<"div">, "children">) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const onHeightRef = useRef(onHeight);
+  onHeightRef.current = onHeight;
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const h = el.getBoundingClientRect().height;
+      if (h < 0.5) return;
+      onHeightRef.current(blockId, h);
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [blockId]);
+
+  const className = [
+    useSticky && "sticky z-10 w-full",
+    !useSticky && "w-full",
+    classNameProp,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const style: ComponentProps<"div">["style"] = useSticky
+    ? { ...styleProp, top: stickyTop }
+    : styleProp;
+
+  return (
+    <div ref={ref} className={className} style={style} {...rest}>
+      {children}
+    </div>
+  );
+}
+
 export default function Home() {
   const queryClient = useQueryClient();
   // `?edit=<id>` switches the chat into "resume this session" mode. We can't
@@ -168,12 +223,17 @@ export default function Home() {
     () => new Set<string>(),
   );
   const [cameraBusy, setCameraBusy] = useState(false);
+  const [exerciseBlockHeights, setExerciseBlockHeights] = useState<
+    Record<string, number>
+  >({});
   // Refs mirror state so async flows (chat -> create block -> append sets) can
   // read the latest values without waiting for React to flush setState.
   const blocksRef = useRef<Record<string, ExerciseBlock>>({});
   const activeBlockIdRef = useRef<string | null>(null);
   const messagesRef = useRef<Message[]>(SEED_MESSAGES);
   const collapsedBlockIdsRef = useRef<Set<string>>(new Set());
+  /** After the user expands a block, ignore auto-collapse briefly (scroll layout can misfire). */
+  const autoCollapseIgnoreUntilRef = useRef(new Map<string, number>());
   // Sets the user typed before any exercise was named. Drained on the next
   // turn that creates/activates a block (see lib/chat-flow.ts).
   const bufferedSetsRef = useRef<SetDetail[]>([]);
@@ -212,9 +272,11 @@ export default function Home() {
     const current = collapsedBlockIdsRef.current;
     if (current.has(blockId)) {
       // Expanding this one → collapse all others.
+      autoCollapseIgnoreUntilRef.current.set(blockId, Date.now() + 800);
       collapseOthers(blockId);
       commitActiveBlockId(blockId);
     } else {
+      autoCollapseIgnoreUntilRef.current.delete(blockId);
       const next = new Set(current);
       next.add(blockId);
       commitCollapsed(next);
@@ -1952,25 +2014,66 @@ export default function Home() {
     />
   );
 
-  // Collapsed cards in message order (excluding deleted blocks). Used to
-  // compute stacked `top` offsets so sticky cards chain instead of overlap.
-  const collapsedStickyOrder = useMemo(() => {
-    const map = new Map<string, number>();
-    let index = 0;
-    for (const message of messages) {
-      if (message.kind !== "exercise-block") continue;
-      if (!collapsedBlockIds.has(message.blockId)) continue;
-      const block = blocks[message.blockId];
-      if (!block || block.deleted) continue;
-      map.set(block.id, index);
-      index += 1;
-    }
-    return map;
-  }, [messages, collapsedBlockIds, blocks]);
-
-  // Height (px) reserved for a collapsed/sticky exercise pill. Matches the
-  // rendered height of `ExerciseBlockCard` in its collapsed state.
+  /** Collapsed row height guess before measurement. */
   const STICKY_CARD_STEP = 68;
+  /** Expanded height guess before first measure. */
+  const STICKY_EXPANDED_FALLBACK_H = 200;
+
+  const orderedExerciseBlockIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const m of messages) {
+      if (m.kind !== "exercise-block") continue;
+      const b = blocks[m.blockId];
+      if (b && !b.deleted) ids.push(m.blockId);
+    }
+    return ids;
+  }, [messages, blocks]);
+
+  const nonDeletedExerciseCount = orderedExerciseBlockIds.length;
+
+  const onExerciseBlockHeight = useCallback((id: string, h: number) => {
+    setExerciseBlockHeights((prev) => {
+      const old = prev[id];
+      if (old !== undefined && Math.abs(old - h) < 0.5) return prev;
+      return { ...prev, [id]: h };
+    });
+  }, []);
+
+  useEffect(() => {
+    const idSet = new Set(orderedExerciseBlockIds);
+    setExerciseBlockHeights((prev) => {
+      const next: Record<string, number> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (idSet.has(k)) next[k] = v;
+      }
+      if (
+        Object.keys(next).length === Object.keys(prev).length &&
+        Object.keys(next).every((k) => next[k] === prev[k])
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [orderedExerciseBlockIds]);
+
+  // Cumulative sticky `top` from measured block heights so an expanded card
+  // stays in the rail and later stickies shift down (no fixed index * 68).
+  const stickyTopByBlockId = useMemo(() => {
+    const m = new Map<string, number>();
+    let sum = 0;
+    for (const id of orderedExerciseBlockIds) {
+      m.set(id, sum);
+      const h =
+        exerciseBlockHeights[id] ??
+        (collapsedBlockIds.has(id) ? STICKY_CARD_STEP : STICKY_EXPANDED_FALLBACK_H);
+      sum += h;
+    }
+    return m;
+  }, [
+    orderedExerciseBlockIds,
+    exerciseBlockHeights,
+    collapsedBlockIds,
+  ]);
 
   // Auto-collapse expanded blocks once they are fully above the content
   // viewport. Using direct scroll position checks is more reliable than
@@ -1989,13 +2092,18 @@ export default function Home() {
       const nextCollapsed = new Set(collapsedBlockIdsRef.current);
       let changed = false;
 
+      const now = Date.now();
       for (const node of nodes) {
         const blockId = node.getAttribute("data-expanded-block");
         if (!blockId || nextCollapsed.has(blockId)) continue;
+        const ignoreUntil = autoCollapseIgnoreUntilRef.current.get(blockId);
+        if (ignoreUntil !== undefined && now < ignoreUntil) continue;
         const rect = node.getBoundingClientRect();
+        if (rect.height < 2) continue;
         // Collapse once this card has completely moved above the scroll viewport.
         if (rect.bottom < rootTop + 4) {
           nextCollapsed.add(blockId);
+          autoCollapseIgnoreUntilRef.current.delete(blockId);
           changed = true;
         }
       }
@@ -2025,7 +2133,7 @@ export default function Home() {
 
   return (
     <div className="relative flex min-h-0 flex-col bg-background">
-      <div className="mx-auto flex w-full flex-col gap-3 px-1 pb-40">
+      <div className="mx-auto flex w-full min-w-0 flex-col items-stretch gap-3 px-1 pb-40 [&>*]:shrink-0">
           <div className="h-2 shrink-0" />
           {messages.map((message, index) => {
             const isLastMessage = index === messages.length - 1;
@@ -2043,24 +2151,27 @@ export default function Home() {
               const isCollapsed = collapsedBlockIds.has(block.id);
               const isDeleted = Boolean(block.deleted);
               if (isCollapsed && !isDeleted) {
-                const stickyIndex = collapsedStickyOrder.get(block.id) ?? 0;
+                const useSticky = nonDeletedExerciseCount > 1;
+                const stickyTop = stickyTopByBlockId.get(block.id) ?? 0;
                 return (
-                  <div
+                  <ExerciseBlockStickyFrame
                     key={message.id}
+                    blockId={block.id}
+                    useSticky={useSticky}
+                    stickyTop={stickyTop}
+                    onHeight={onExerciseBlockHeight}
                     data-exercise-block={block.id}
                     data-collapsed-block={block.id}
-                    className="sticky z-20"
-                    style={{ top: stickyIndex * STICKY_CARD_STEP }}
                   >
                     <ExerciseBlockCard
                       exercise={block.exercise}
                       sets={block.sets}
                       collapsed
-                      sticky
+                      sticky={useSticky}
                       onToggle={() => toggleBlockCollapsed(block.id)}
                       onDelete={() => removeBlock(block.id)}
                     />
-                  </div>
+                  </ExerciseBlockStickyFrame>
                 );
               }
               if (isDeleted) {
@@ -2077,10 +2188,14 @@ export default function Home() {
                 );
               }
               return (
-                <div
+                <ExerciseBlockStickyFrame
                   key={message.id}
-                  data-expanded-block={block.id}
+                  blockId={block.id}
+                  useSticky={nonDeletedExerciseCount > 1}
+                  stickyTop={stickyTopByBlockId.get(block.id) ?? 0}
+                  onHeight={onExerciseBlockHeight}
                   data-exercise-block={block.id}
+                  data-expanded-block={block.id}
                 >
                   <ExerciseBlockCard
                     exercise={block.exercise}
@@ -2090,7 +2205,7 @@ export default function Home() {
                     onDeleteSet={(setId) => removeSetFromBlock(block.id, setId)}
                     onDelete={() => removeBlock(block.id)}
                   />
-                </div>
+                </ExerciseBlockStickyFrame>
               );
             }
 
