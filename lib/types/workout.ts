@@ -53,8 +53,21 @@ export type ExerciseWeightCandidate = {
   reasoning?: string;
 };
 
+/** How the #1 camera suggestion was chosen (vision slug vs server catalog/hint). */
+export type VisionPrimarySource = "vision_model" | "equipment_catalog";
+
 export type VisionRecognitionResponse = {
   candidates: ExerciseWeightCandidate[];
+  /** True when a vision candidate passed family checks and the client may auto-log. */
+  primarySource: VisionPrimarySource;
+  /** Kept for compatibility; mirrors `description` from the two-phase vision response. */
+  equipmentHint: string;
+  /** What the vision model said it saw (equipment and context) in natural language. */
+  description: string;
+  /** Free-text exercise ideas before catalog matching. */
+  suggestedInNaturalLanguage: string[];
+  /** False if analytics insert to `vision_detections` failed. */
+  detectionLogged?: boolean;
 };
 
 export type ChatContextSet = {

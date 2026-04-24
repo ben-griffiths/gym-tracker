@@ -79,6 +79,7 @@ type ExerciseBlock = {
 
 type Message =
   | { id: string; kind: "text"; role: "user" | "assistant" | "system"; text: string }
+  | { id: string; kind: "camera-image"; role: "user"; imageUrl: string }
   | { id: string; kind: "exercise-block"; role: "assistant"; blockId: string }
   | {
       id: string;
@@ -123,6 +124,25 @@ function makeId(prefix: string) {
   }
   idCounter += 1;
   return `${prefix}_${idCounter}`;
+}
+
+/** Auto-log camera #1 only when the API reports a vision slug and high enough confidence. */
+const VISION_AUTO_LOG_MIN_CONFIDENCE = 0.68;
+
+function visionResponseDescriptionText(
+  r: Awaited<ReturnType<typeof recognizeVision>>,
+): string | null {
+  const desc = r.description?.trim() || r.equipmentHint?.trim() || "";
+  const ideas = (r.suggestedInNaturalLanguage ?? [])
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!desc && ideas.length === 0) return null;
+  const parts: string[] = [];
+  if (desc) parts.push(desc);
+  if (ideas.length > 0) {
+    parts.push(`Suggested: ${ideas.join(" · ")}`);
+  }
+  return parts.join("\n\n");
 }
 
 export default function Home() {
@@ -1639,18 +1659,77 @@ export default function Home() {
     imageBase64: string;
     mimeType: string;
   }) {
+    const imageUrl = `data:${payload.mimeType};base64,${payload.imageBase64}`;
+    appendMessage({
+      id: makeId("msg"),
+      kind: "camera-image",
+      role: "user",
+      imageUrl,
+    });
+
     const response = await recognizeVision(payload.imageBase64, payload.mimeType);
-    if (response.candidates.length === 0) {
+    const matched = response.candidates.filter((candidate) => candidate.confidence > 0);
+    if (matched.length === 0) {
       toast.error("No exercises detected in image");
       return;
     }
 
+    const shouldAutoLog =
+      response.primarySource === "vision_model" &&
+      matched[0] !== undefined &&
+      matched[0].confidence >= VISION_AUTO_LOG_MIN_CONFIDENCE;
+
+    const blurb = visionResponseDescriptionText(response);
+
+    if (!shouldAutoLog) {
+      const text = blurb
+        ? `${blurb}\n\nPick the exercise that best matches below.`
+        : "Pick the exercise that best matches this photo.";
+      appendMessage({ id: makeId("msg"), kind: "text", role: "assistant", text });
+      appendMessage({ id: makeId("msg"), kind: "candidates", role: "assistant", candidates: matched });
+      return;
+    }
+
+    if (blurb) {
+      appendMessage({ id: makeId("msg"), kind: "text", role: "assistant", text: blurb });
+    }
+
+    const primary = matched[0];
+    const { blockId } = ensureBlockForExercise(primary.exercise);
+    if (primary.weight !== null) {
+      await addSetToBlock(blockId, {
+        reps: lastSet?.reps ?? null,
+        weight: primary.weight,
+        weightUnit: primary.weightUnit,
+        source: "camera",
+      });
+    }
+
     appendMessage({
       id: makeId("msg"),
-      kind: "candidates",
+      kind: "text",
       role: "assistant",
-      candidates: response.candidates,
+      text: `Logged as ${primary.exercise.name}.`,
     });
+
+    const alternatives = matched
+      .slice(1)
+      .map((candidate) => candidate.exercise)
+      .filter(
+        (exercise, index, all) =>
+          all.findIndex((item) => item.slug === exercise.slug) === index,
+      );
+
+    if (alternatives.length > 0) {
+      appendMessage({
+        id: makeId("msg"),
+        kind: "exercise-options",
+        role: "assistant",
+        options: alternatives,
+        pendingSets: [],
+        boundBlockId: blockId,
+      });
+    }
   }
 
   async function handleConfirmCandidate(
@@ -2045,22 +2124,38 @@ export default function Home() {
               );
             }
 
-            return (
-              <MessageBubble key={message.id} role="assistant">
-                {message.resolved ? (
-                  <span className="text-sm text-muted-foreground">
-                    Logged from camera.
-                  </span>
-                ) : (
-                  <CameraCandidates
-                    candidates={message.candidates}
-                    onConfirm={(candidate) =>
-                      handleConfirmCandidate(message.id, candidate)
-                    }
+            if (message.kind === "camera-image") {
+              return (
+                <MessageBubble key={message.id} role="user">
+                  <img
+                    src={message.imageUrl}
+                    alt="Captured workout set"
+                    className="max-h-64 w-full rounded-xl object-cover"
                   />
-                )}
-              </MessageBubble>
-            );
+                </MessageBubble>
+              );
+            }
+
+            if (message.kind === "candidates") {
+              return (
+                <MessageBubble key={message.id} role="assistant">
+                  {message.resolved ? (
+                    <span className="text-sm text-muted-foreground">
+                      Logged from camera.
+                    </span>
+                  ) : (
+                    <CameraCandidates
+                      candidates={message.candidates}
+                      onConfirm={(candidate) =>
+                        handleConfirmCandidate(message.id, candidate)
+                      }
+                    />
+                  )}
+                </MessageBubble>
+              );
+            }
+
+            return null;
           })}
 
           {chatMutation.isPending ? (

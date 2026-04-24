@@ -1,9 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Dumbbell } from "lucide-react";
+import { Dumbbell } from "lucide-react";
 import {
   getExerciseByName,
   getExerciseBySlug,
@@ -37,8 +37,6 @@ type RepMaxRow = {
 };
 
 export default function RepMaxesPage() {
-  const [repPage, setRepPage] = useState<0 | 1>(0);
-
   const historyQuery = useQuery<HistoryResponse>({
     queryKey: ["workouts"],
     queryFn: async () => {
@@ -164,11 +162,6 @@ export default function RepMaxesPage() {
 
   const isLoading = historyQuery.isLoading;
   const isEmpty = !isLoading && rows.length === 0;
-  const visibleRepColumns = useMemo(
-    () => (repPage === 0 ? REP_COLUMNS.slice(0, 5) : REP_COLUMNS.slice(5, 10)),
-    [repPage],
-  );
-
   return (
     <div className="flex flex-col bg-background">
       <main className="flex-1 pb-10 pt-5">
@@ -191,49 +184,27 @@ export default function RepMaxesPage() {
           ) : (
             <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
               <div className="overflow-x-auto">
-                <table className="w-full table-fixed border-collapse text-sm">
+                <table className="min-w-full w-max border-collapse text-sm">
                   <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                     <tr>
                       <th
                         scope="col"
-                        className="sticky left-0 z-10 w-44 bg-muted/40 px-2 py-2 text-left font-medium"
+                        className="sticky left-0 z-20 min-w-36 bg-muted px-2 py-2 text-left font-medium after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border"
                       >
                         Exercise
                       </th>
-                      {visibleRepColumns.map((reps, index) => (
+                      {REP_COLUMNS.map((reps) => (
                         <th
                           key={reps}
                           scope="col"
-                          className="relative px-3 py-2 text-center font-medium"
+                          className="min-w-13 px-2 py-2 text-center font-medium"
                         >
-                          {index === 0 ? (
-                            <button
-                              type="button"
-                              onClick={() => setRepPage(0)}
-                              disabled={repPage === 0}
-                              aria-label="Show reps 1 to 5"
-                              className="absolute left-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-foreground/70 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-0"
-                            >
-                              <ChevronLeft className="h-4 w-4" />
-                            </button>
-                          ) : null}
                           {reps}
-                          {index === visibleRepColumns.length - 1 ? (
-                            <button
-                              type="button"
-                              onClick={() => setRepPage(1)}
-                              disabled={repPage === 1}
-                              aria-label="Show reps 6 to 10"
-                              className="absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-foreground/70 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-0"
-                            >
-                              <ChevronRight className="h-4 w-4" />
-                            </button>
-                          ) : null}
                         </th>
                       ))}
                       <th
                         scope="col"
-                        className="border-l bg-muted/60 px-3 py-2 text-center font-semibold text-foreground"
+                        className="sticky right-0 z-20 bg-muted px-2 py-2 text-center font-semibold text-foreground before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border"
                       >
                         Est&nbsp;1RM
                       </th>
@@ -252,7 +223,7 @@ export default function RepMaxesPage() {
                         >
                           <th
                             scope="row"
-                            className="sticky left-0 z-[1] w-44 bg-card px-2 py-2 text-left font-medium"
+                            className="sticky left-0 z-10 min-w-36 bg-card px-2 py-2 text-left font-medium after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border"
                           >
                             <div className="flex min-w-0 items-center gap-1.5">
                               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/50">
@@ -274,7 +245,7 @@ export default function RepMaxesPage() {
                               </span>
                             </div>
                           </th>
-                          {visibleRepColumns.map((reps) => {
+                          {REP_COLUMNS.map((reps) => {
                             const weight = row.maxes[reps];
                             // Each weighted cell is rendered as the projected
                             // 1RM for that weight × reps combo (using the
@@ -325,7 +296,7 @@ export default function RepMaxesPage() {
                             return (
                               <td
                                 key={reps}
-                                className="whitespace-nowrap px-3 py-2 text-center tabular-nums"
+                                className="min-w-13 whitespace-nowrap px-2 py-2 text-center tabular-nums"
                                 style={tintStyle}
                               >
                                 {weight === undefined &&
@@ -367,7 +338,7 @@ export default function RepMaxesPage() {
                               </td>
                             );
                           })}
-                          <td className="whitespace-nowrap border-l bg-muted/20 px-3 py-2 text-center tabular-nums">
+                          <td className="sticky right-0 z-10 whitespace-nowrap bg-card px-2 py-2 text-center tabular-nums before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border">
                             {row.estimatedOneRm !== null &&
                             row.estimateSource ? (
                               <div className="flex flex-col items-center leading-tight">
