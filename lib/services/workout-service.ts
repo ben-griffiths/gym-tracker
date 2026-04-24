@@ -24,6 +24,7 @@ type WorkoutSessionRow = {
   status: "ACTIVE" | "COMPLETED" | "PAUSED";
   created_at: string;
   updated_at: string;
+  chat_transcript?: unknown | null;
 };
 
 type ExerciseRow = {
@@ -93,6 +94,7 @@ function mapSession(row: WorkoutSessionRow) {
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    chatTranscript: row.chat_transcript ?? null,
   };
 }
 
@@ -308,6 +310,23 @@ export async function createWorkoutSession(
     group,
     session: mapSession(sessionData as WorkoutSessionRow),
   };
+}
+
+export async function updateWorkoutSessionTranscript(
+  client: AppSupabaseClient,
+  userId: string,
+  sessionId: string,
+  chatTranscript: unknown,
+) {
+  const { data, error } = await client
+    .from("workout_sessions")
+    .update({ chat_transcript: chatTranscript })
+    .eq("user_id", userId)
+    .eq("id", sessionId)
+    .select("id")
+    .single();
+  if (error) throw error;
+  return data as { id: string };
 }
 
 export async function ensureSessionExercise(

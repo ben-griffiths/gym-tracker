@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { chatTranscriptSchema } from "@/lib/workout-chat-transcript";
 
 export const weightUnitSchema = z.enum(["kg", "lb"]);
 
@@ -59,6 +60,15 @@ export const createWorkoutSchema = z.object({
   groupName: z.string().min(2).max(60),
   sessionName: z.string().min(2).max(80),
   notes: z.string().max(200).optional(),
+});
+
+export const patchWorkoutTranscriptSchema = z.object({
+  chatTranscript: chatTranscriptSchema,
+});
+
+export const registerSessionExerciseSchema = z.object({
+  sessionId: z.string().uuid(),
+  exercise: z.string().min(1).max(120),
 });
 
 export const createSetSchema = z.object({

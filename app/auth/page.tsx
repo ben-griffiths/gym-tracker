@@ -59,7 +59,7 @@ export default function AuthPage() {
   }
 
   return (
-    <main className="flex min-h-full items-center justify-center bg-muted/30 p-4">
+    <main className="flex min-h-full items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>{mode === "login" ? "Log in" : "Create account"}</CardTitle>

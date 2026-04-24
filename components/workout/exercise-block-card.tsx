@@ -93,18 +93,6 @@ function formatWeightRange(sets: BlockSet[]): string {
   return min === max ? `${min} ${unit}` : `${min}–${max} ${unit}`;
 }
 
-function totalVolume(sets: BlockSet[]): { value: number; unit: "kg" | "lb" } {
-  let value = 0;
-  let unit: "kg" | "lb" = "kg";
-  for (const set of sets) {
-    if (set.weight !== null && set.reps !== null) {
-      value += set.weight * set.reps;
-      unit = set.weightUnit;
-    }
-  }
-  return { value: Math.round(value), unit };
-}
-
 export function ExerciseBlockCard({
   exercise,
   sets,
@@ -128,9 +116,6 @@ export function ExerciseBlockCard({
     if (reps !== "– reps") summaryParts.push(reps);
     const weight = formatWeightRange(sets);
     if (weight) summaryParts.push(weight);
-    const volume = totalVolume(sets);
-    if (volume.value > 0)
-      summaryParts.push(`${volume.value.toLocaleString()} ${volume.unit} vol`);
   }
 
   const ChevronIcon = collapsed ? ChevronDown : ChevronUp;
@@ -157,7 +142,10 @@ export function ExerciseBlockCard({
         className={cn(
           "flex w-full items-center gap-1 pr-4 transition-colors",
           collapsed
-            ? "border-b border-b-transparent bg-muted/40"
+            ? cn(
+                "border-b border-b-transparent",
+                deleted ? "bg-transparent" : "bg-card",
+              )
             : active && !deleted
               ? "border-b border-primary/25 bg-transparent"
               : "border-b border-border bg-card",
@@ -177,7 +165,7 @@ export function ExerciseBlockCard({
         >
           <span
             className={cn(
-              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background",
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-card",
               deleted && "opacity-50",
             )}
           >
@@ -199,7 +187,7 @@ export function ExerciseBlockCard({
             >
               {exercise.name}
             </span>
-            <span className="truncate text-xs text-muted-foreground">
+            <span className="truncate text-xs text-muted-foreground tabular-nums">
               {exercise.category ?? "Exercise"} · {summaryParts.join(" · ")}
             </span>
           </div>
@@ -252,8 +240,8 @@ export function ExerciseBlockCard({
             No sets yet. Send reps or weight in the chat to add one.
           </div>
         ) : (
-          <ul className="divide-y">
-            {sets.map((set) => {
+          <ul className="flex flex-col">
+            {sets.map((set, index) => {
               const { reps: repsLabel, weight: weightLabel } = formatSet(set);
               const rpeLabel = formatRpeLabel(set.rpe);
               const hasEffort =
@@ -261,10 +249,14 @@ export function ExerciseBlockCard({
                 (set.rir !== null && set.rir !== undefined) ||
                 Boolean(set.feel);
               return (
-                <li
-                  key={set.id}
-                  className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
-                >
+                <li key={set.id} className="flex flex-col">
+                  {index > 0 ? (
+                    <div
+                      className="mx-4 h-px shrink-0 bg-border/70 dark:bg-border/50"
+                      aria-hidden
+                    />
+                  ) : null}
+                  <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm tabular-nums">
                   <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                     <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-[11px] font-semibold">
                       {set.setNumber}
@@ -323,6 +315,7 @@ export function ExerciseBlockCard({
                       ) : null}
                     </span>
                   ) : null}
+                  </div>
                 </li>
               );
             })}

@@ -2,34 +2,79 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AvatarCircle } from "@/components/profile/avatar-circle";
+import { formatWorkoutTitle } from "@/lib/workout-history";
+
+const PAGE_HEADER_TITLES: Record<string, string> = {
+  "/strength": "Strength",
+  "/rep-maxes": "Rep maxes",
+};
 
 export function AppHeader() {
   const pathname = usePathname();
   const isHome = pathname === "/";
+  const pageTitle = PAGE_HEADER_TITLES[pathname];
+  const [nowLabel, setNowLabel] = useState(() =>
+    formatWorkoutTitle(new Date().toISOString()),
+  );
+  useEffect(() => {
+    if (pageTitle) return;
+    const update = () =>
+      setNowLabel(formatWorkoutTitle(new Date().toISOString()));
+    update();
+    const id = setInterval(update, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") update();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [pageTitle]);
 
   return (
-    <header className="z-30 border-b bg-background/85 py-4 backdrop-blur">
-      <div className="px-4 sm:px-6">
+    <header className="z-30 flex h-[75px] min-h-[75px] shrink-0 border-b bg-card">
+      <div className="flex h-full w-full min-w-0 items-center px-4 sm:px-6">
         {isHome ? (
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h1 className="text-base font-semibold tracking-tight">LiftLog</h1>
-              <p className="text-xs text-muted-foreground">Mobile-first lifting journal</p>
+          <div className="flex w-full items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold leading-tight tracking-tight sm:text-xl">
+                LiftLog
+              </h1>
+              <p className="mt-0.5 text-xs leading-tight text-muted-foreground sm:text-sm">
+                Mobile-first lifting journal
+              </p>
             </div>
-            <AvatarCircle />
+            <AvatarCircle className="!h-11 !w-11 text-sm" />
           </div>
         ) : (
-          <div className="flex h-9 items-center justify-between">
+          <div className="grid w-full grid-cols-[2.75rem_1fr_2.75rem] items-center gap-1">
             <Link
               href="/"
               aria-label="Back to home"
-              className="inline-flex h-9 items-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-start pl-0 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <ArrowLeft className="h-5 w-5" />
+              <ArrowLeft className="h-6 w-6 shrink-0" />
             </Link>
-            <AvatarCircle />
+            {pageTitle ? (
+              <h1 className="min-w-0 truncate text-center text-sm font-semibold text-foreground">
+                {pageTitle}
+              </h1>
+            ) : (
+              <p
+                className="min-w-0 truncate text-center text-sm font-semibold tabular-nums text-foreground"
+                aria-live="polite"
+                aria-atomic
+              >
+                {nowLabel}
+              </p>
+            )}
+            <div className="flex justify-end">
+              <AvatarCircle className="!h-11 !w-11 text-sm" />
+            </div>
           </div>
         )}
       </div>

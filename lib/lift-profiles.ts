@@ -34,6 +34,7 @@ export type LiftProfile = {
   slug: string;
   oneRmKg: number;
   score: number | null;
+  /** From `tierFromScore(score)` so the label matches the 0…100 readout, not 1RM vs kg only. */
   tier: StrengthTier | null;
   /**
    * Catalog 1RM thresholds (in kg) for each tier, when StrengthLevel publishes
@@ -67,10 +68,7 @@ export function combineThresholds(standards: {
   return standards.male ?? standards.female;
 }
 
-export function scoreAgainstThresholds(
-  oneRmKg: number,
-  thresholds: Thresholds,
-): { score: number; tier: StrengthTier } {
+function monotonicThresholdPoints(thresholds: Thresholds): number[] {
   const points = [
     thresholds.beginner,
     thresholds.novice,
@@ -78,33 +76,83 @@ export function scoreAgainstThresholds(
     thresholds.advanced,
     thresholds.elite,
   ];
-  const monotonic = points.reduce<number[]>((acc, value, index) => {
+  return points.reduce<number[]>((acc, value, index) => {
     if (index === 0) return [value];
     acc.push(Math.max(value, acc[index - 1] + 0.0001));
     return acc;
   }, []);
-
-  if (oneRmKg <= monotonic[0]) {
-    const ratio = monotonic[0] > 0 ? oneRmKg / monotonic[0] : 0;
-    return { score: Math.max(0, Math.min(1, ratio * 0.2)), tier: TIERS[0] };
-  }
-  for (let i = 1; i < monotonic.length; i += 1) {
-    if (oneRmKg <= monotonic[i]) {
-      const span = monotonic[i] - monotonic[i - 1];
-      const ratio = span > 0 ? (oneRmKg - monotonic[i - 1]) / span : 0;
-      const score = i * 0.2 + ratio * 0.2;
-      return { score: Math.max(0, Math.min(1, score)), tier: TIERS[i] };
-    }
-  }
-  return { score: 1, tier: TIERS[4] };
 }
 
+/**
+ * Which tier a 1RM falls into, using the same monotonicized kg boundaries as
+ * the catalog (half-open: below beginner, then up to each published tier).
+ */
+export function tierFromOneRmKg(
+  oneRmKg: number,
+  thresholds: Thresholds,
+): StrengthTier {
+  const m = monotonicThresholdPoints(thresholds);
+  if (oneRmKg <= m[0]) return "Beginner";
+  for (let i = 1; i < m.length; i += 1) {
+    if (oneRmKg <= m[i]) {
+      return TIERS[i] as StrengthTier;
+    }
+  }
+  return "Elite";
+}
+
+const SCORE_BAND = 0.2;
+
+/**
+ * 0…1 bar score: four gaps between the five published kg thresholds, each
+ * worth 0.2, plus 0.2 for any weight past the last threshold. At or below the
+ * beginner (first) threshold the score is 0 — there is no “ramp from 0 to m0”.
+ * Within (m[i−1], m[i]], score = (i−1)·0.2 + (w−lo)/(hi−lo)·0.2.
+ * Call `tierFromScore` on the result for a label that matches this scale.
+ */
+export function scoreAgainstThresholds(
+  oneRmKg: number,
+  thresholds: Thresholds,
+): { score: number } {
+  const m = monotonicThresholdPoints(thresholds);
+  if (!Number.isFinite(oneRmKg) || !m.every((x) => Number.isFinite(x))) {
+    return { score: 0 };
+  }
+
+  if (oneRmKg < 0) {
+    return { score: 0 };
+  }
+
+  if (oneRmKg <= m[0]) {
+    return { score: 0 };
+  }
+
+  for (let i = 1; i <= 4; i += 1) {
+    const lo = m[i - 1];
+    const hi = m[i];
+    if (oneRmKg > hi) {
+      continue;
+    }
+    const base = (i - 1) * SCORE_BAND;
+    const span = hi - lo;
+    if (span > 0) {
+      return {
+        score: Math.min(1, base + ((oneRmKg - lo) / span) * SCORE_BAND),
+      };
+    }
+    return { score: Math.min(1, base + SCORE_BAND) };
+  }
+
+  // Past the published elite 1RM (fifth 0.2 step).
+  return { score: 1 };
+}
+
+/** Maps an aggregate 0…1 score to a label; bands align to 0.2 ticks on the bar. */
 export function tierFromScore(score: number): StrengthTier {
-  // Keep tiers conservative so low-60s don't read as "Advanced".
-  if (score < 0.3) return "Beginner";
-  if (score < 0.5) return "Novice";
-  if (score < 0.7) return "Intermediate";
-  if (score < 0.9) return "Advanced";
+  if (score < 0.2) return "Beginner";
+  if (score < 0.4) return "Novice";
+  if (score < 0.6) return "Intermediate";
+  if (score < 0.8) return "Advanced";
   return "Elite";
 }
 
@@ -154,13 +202,13 @@ export function computeLiftProfiles(sessions: HistorySession[]): LiftProfile[] {
       });
       continue;
     }
-    const result = scoreAgainstThresholds(oneRmKg, thresholds);
+    const { score } = scoreAgainstThresholds(oneRmKg, thresholds);
     profiles.push({
       exerciseName: name,
       slug,
       oneRmKg,
-      score: result.score,
-      tier: result.tier,
+      score,
+      tier: tierFromScore(score),
       thresholdsKg: tierThresholdMap(thresholds),
     });
   }

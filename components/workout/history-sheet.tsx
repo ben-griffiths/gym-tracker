@@ -15,6 +15,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { deleteWorkoutSession } from "@/lib/api";
+import { ExerciseListRowIcon } from "@/components/workout/exercise-list-row-icon";
 import {
   computeVolume,
   flattenSets,
@@ -138,11 +139,11 @@ export function HistorySheet({
                     key={session.id}
                     className={
                       session.isLive
-                        ? "rounded-2xl border border-primary/30 bg-card p-4 ring-1 ring-primary/20"
-                        : "rounded-2xl border bg-card p-4"
+                        ? "overflow-hidden rounded-2xl border border-sky-400/50 bg-card ring-1 ring-sky-500/20 dark:border-sky-500/40 dark:ring-sky-400/25"
+                        : "overflow-hidden rounded-2xl border border-slate-200/90 bg-card ring-1 ring-sky-500/[0.08] dark:border-border dark:ring-sky-400/10"
                     }
                   >
-                    <header className="mb-2 flex items-center justify-between gap-3">
+                    <header className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-2">
                       <div className="min-w-0">
                         <h3 className="flex items-center gap-2 truncate text-sm font-semibold">
                           {formatWorkoutTitle(session.startedAt, session.name)}
@@ -160,9 +161,17 @@ export function HistorySheet({
                         </p>
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                        <Badge variant="outline">{sets.length} sets</Badge>
+                        <Badge
+                          variant="outline"
+                          className="border-sky-200/80 bg-sky-50/90 text-sky-950 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100"
+                        >
+                          {sets.length} sets
+                        </Badge>
                         {volume > 0 ? (
-                          <Badge variant="outline">
+                          <Badge
+                            variant="outline"
+                            className="border-emerald-200/80 bg-emerald-50/90 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100"
+                          >
                             {volume.toLocaleString()} {volumeUnit}
                           </Badge>
                         ) : null}
@@ -181,23 +190,36 @@ export function HistorySheet({
                         ) : null}
                       </div>
                     </header>
-                    <ul className="flex flex-col gap-1.5">
+                    <ul className="flex flex-col px-4 pt-0">
                       {exerciseGroups.length === 0 ? (
-                        <li className="text-xs text-muted-foreground">
+                        <li className="py-2.5 text-xs text-muted-foreground">
                           No sets logged.
                         </li>
                       ) : (
-                        exerciseGroups.map((group) => (
+                        exerciseGroups.map((group, index) => (
                           <li
                             key={group.exerciseName}
-                            className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-2.5 py-1.5 text-sm"
+                            className="relative"
                           >
-                            <span className="truncate pr-2 font-medium">
-                              {group.exerciseName}
-                            </span>
-                            <span className="shrink-0 text-muted-foreground">
-                              {group.summary}
-                            </span>
+                            {index > 0 ? (
+                              <div
+                                className="pointer-events-none absolute left-0 right-0 top-0 h-px bg-border/80 dark:bg-border/50"
+                                aria-hidden
+                              />
+                            ) : null}
+                            <div className="flex items-center justify-between gap-3 py-2.5 pr-0 text-sm">
+                              <div className="flex min-w-0 flex-1 items-center gap-2.5 pr-1">
+                                <ExerciseListRowIcon
+                                  exerciseName={group.exerciseName}
+                                />
+                                <span className="truncate font-medium">
+                                  {group.exerciseName}
+                                </span>
+                              </div>
+                              <span className="shrink-0 text-right text-xs text-muted-foreground tabular-nums sm:text-sm">
+                                {group.summary}
+                              </span>
+                            </div>
                           </li>
                         ))
                       )}

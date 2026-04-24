@@ -10,7 +10,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { toast } from "sonner";
 import Link from "next/link";
 import { useAppScrollRootRef } from "@/components/layout/app-scroll-area";
@@ -36,7 +40,9 @@ import {
   createWorkoutSession,
   deleteSet,
   getChatSuggestion,
+  patchWorkoutTranscript,
   recognizeVision,
+  registerSessionExercise,
   updateSet,
 } from "@/lib/api";
 import { getExerciseByName, getExerciseBySlug } from "@/lib/exercises";
@@ -64,8 +70,15 @@ import {
   flattenSets,
   formatWorkoutTitle,
   groupByExercise,
+  rehydrationExerciseGroupsInOrder,
   type HistoryResponse,
 } from "@/lib/workout-history";
+import {
+  computeSlugToBlockId,
+  deserializeWorkoutChatMessages,
+  serializeWorkoutChatTranscript,
+  type WorkoutChatMessage,
+} from "@/lib/workout-chat-transcript";
 import type {
   BlockOperation,
   ChatContext,
@@ -87,36 +100,7 @@ type ExerciseBlock = {
   deleted?: boolean;
 };
 
-type Message =
-  | { id: string; kind: "text"; role: "user" | "assistant" | "system"; text: string }
-  | { id: string; kind: "camera-image"; role: "user"; imageUrl: string }
-  | { id: string; kind: "exercise-block"; role: "assistant"; blockId: string }
-  | {
-      id: string;
-      kind: "exercise-description";
-      role: "assistant";
-      exercise: ExerciseRecord;
-      mode: "instructions" | "description";
-    }
-  | {
-      id: string;
-      kind: "exercise-options";
-      role: "assistant";
-      options: ExerciseRecord[];
-      pendingSets: SetDetail[];
-      // When set, tapping an option swaps the exercise on this block instead
-      // of creating a new one. Used for the "logged as X — not right?" flow.
-      boundBlockId?: string;
-      resolved?: boolean;
-      resolvedExerciseName?: string;
-    }
-  | {
-      id: string;
-      kind: "candidates";
-      role: "assistant";
-      candidates: ExerciseWeightCandidate[];
-      resolved?: boolean;
-    };
+type Message = WorkoutChatMessage;
 
 const SEED_MESSAGES: Message[] = [
   {
@@ -233,6 +217,11 @@ export default function Home() {
   const [exerciseBlockHeights, setExerciseBlockHeights] = useState<
     Record<string, number>
   >({});
+  const storageModeRef = useRef<"database" | null>(null);
+  const skipTranscriptSaveRef = useRef(false);
+  const transcriptDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   // Refs mirror state so async flows (chat -> create block -> append sets) can
   // read the latest values without waiting for React to flush setState.
   const blocksRef = useRef<Record<string, ExerciseBlock>>({});
@@ -247,6 +236,56 @@ export default function Home() {
 
   const scrollRootRef = useAppScrollRootRef();
 
+  useEffect(() => {
+    storageModeRef.current = storageMode;
+  }, [storageMode]);
+
+  useEffect(() => {
+    return () => {
+      if (transcriptDebounceRef.current) {
+        clearTimeout(transcriptDebounceRef.current);
+      }
+    };
+  }, []);
+
+  async function flushTranscriptSave() {
+    if (skipTranscriptSaveRef.current) return;
+    if (!sessionIdRef.current || storageModeRef.current !== "database") return;
+    const raw = serializeWorkoutChatTranscript(
+      messagesRef.current,
+      blocksRef.current,
+    );
+    try {
+      await patchWorkoutTranscript(sessionIdRef.current, raw);
+      queryClient.invalidateQueries({ queryKey: ["workouts"] });
+    } catch (err) {
+      console.error("Failed to persist chat transcript", err);
+    }
+  }
+
+  function scheduleTranscriptSave() {
+    if (skipTranscriptSaveRef.current) return;
+    if (!sessionIdRef.current || storageModeRef.current !== "database") return;
+    if (transcriptDebounceRef.current) {
+      clearTimeout(transcriptDebounceRef.current);
+    }
+    transcriptDebounceRef.current = setTimeout(() => {
+      transcriptDebounceRef.current = null;
+      void flushTranscriptSave();
+    }, 500);
+  }
+
+  function runWithoutTranscriptSave(fn: () => void) {
+    skipTranscriptSaveRef.current = true;
+    try {
+      fn();
+    } finally {
+      queueMicrotask(() => {
+        skipTranscriptSaveRef.current = false;
+      });
+    }
+  }
+
   function commitBlocks(next: Record<string, ExerciseBlock>) {
     blocksRef.current = next;
     setBlocks(next);
@@ -260,6 +299,7 @@ export default function Home() {
   function commitMessages(next: Message[]) {
     messagesRef.current = next;
     setMessages(next);
+    scheduleTranscriptSave();
   }
 
   function commitCollapsed(next: Set<string>) {
@@ -316,6 +356,10 @@ export default function Home() {
       setSessionId(payload.session.id);
       sessionIdRef.current = payload.session.id;
       setStorageMode(payload.storageMode ?? null);
+      storageModeRef.current = payload.storageMode ?? null;
+      queueMicrotask(() => {
+        void flushTranscriptSave();
+      });
     },
     onError: () => toast.error("Could not start workout session"),
   });
@@ -413,20 +457,25 @@ export default function Home() {
       // empty screen.
       rehydratedRef.current = true;
       toast.error("Couldn't find that workout — starting a fresh session.");
-      commitMessages(SEED_MESSAGES);
+      runWithoutTranscriptSave(() => {
+        commitMessages(SEED_MESSAGES);
+      });
       sessionIdRef.current = null;
       setSessionId(null);
+      setStorageMode(null);
+      storageModeRef.current = null;
       return;
     }
 
     sessionIdRef.current = session.id;
     setSessionId(session.id);
-    setStorageMode(historyQuery.data?.storageMode ?? null);
+    const nextStorage = historyQuery.data?.storageMode ?? null;
+    setStorageMode(nextStorage);
+    storageModeRef.current = nextStorage;
 
-    // `flattenSets` + `groupByExercise` normalise the nested API payload
-    // (session.exercises[].sets[]) into a single per-exercise grouping.
-    const flatSets = flattenSets(session);
-    const exerciseGroups = groupByExercise(flatSets);
+    // Order follows `session_exercises.order_index` and includes rows with
+    // zero sets; `flattenSets` + `groupByExercise` would drop those.
+    const exerciseGroups = rehydrationExerciseGroupsInOrder(session);
 
     const nextBlocks: Record<string, ExerciseBlock> = {};
     const orderedBlockIds: string[] = [];
@@ -495,9 +544,20 @@ export default function Home() {
     rehydratedRef.current = true;
 
     if (orderedBlockIds.length === 0) {
-      // Session has no recognisable exercises — drop back to a blank chat
-      // but still adopt the existing session id so new logs land on it.
-      commitMessages(SEED_MESSAGES);
+      // Session has no recognisable exercises — keep saved chat if any, else
+      // the seed, while still binding to this session id.
+      const raw = session.chatTranscript;
+      const restoredEmpty =
+        raw != null
+          ? deserializeWorkoutChatMessages(raw, new Map(), makeId)
+          : null;
+      runWithoutTranscriptSave(() => {
+        if (restoredEmpty && restoredEmpty.length > 0) {
+          commitMessages(restoredEmpty);
+        } else {
+          commitMessages(SEED_MESSAGES);
+        }
+      });
       return;
     }
 
@@ -509,13 +569,26 @@ export default function Home() {
     const collapsed = new Set<string>(orderedBlockIds.slice(0, -1));
     commitCollapsed(collapsed);
 
-    const intro: Message = {
-      id: makeId("msg"),
-      kind: "text",
-      role: "assistant",
-      text: `Resumed ${formatWorkoutTitle(session.startedAt, session.name)}. Keep logging or tweak any set — changes save straight to this session.`,
-    };
-    commitMessages([intro, ...blockMessages]);
+    const slugToBlock = computeSlugToBlockId(nextBlocks);
+    const raw = session.chatTranscript;
+    const restored =
+      raw != null
+        ? deserializeWorkoutChatMessages(raw, slugToBlock, makeId)
+        : null;
+
+    runWithoutTranscriptSave(() => {
+      if (restored && restored.length > 0) {
+        commitMessages(restored);
+        return;
+      }
+      const intro: Message = {
+        id: makeId("msg"),
+        kind: "text",
+        role: "assistant",
+        text: `Resumed ${formatWorkoutTitle(session.startedAt, session.name)}. Keep logging or tweak any set — changes save straight to this session.`,
+      };
+      commitMessages([intro, ...blockMessages]);
+    });
   }, [editSessionId, historyQuery.data]);
 
   const duplicatingRef = useRef(false);
@@ -688,6 +761,16 @@ export default function Home() {
       role: "assistant",
       blockId: newBlock.id,
     });
+    void (async () => {
+      const sid = sessionIdRef.current ?? (await ensureSessionId());
+      if (!sid || storageModeRef.current !== "database") return;
+      try {
+        await registerSessionExercise(sid, exercise.name);
+        queryClient.invalidateQueries({ queryKey: ["workouts"] });
+      } catch (err) {
+        console.error("registerSessionExercise", err);
+      }
+    })();
     return { blockId: newBlock.id, created: true };
   }
 
@@ -1502,6 +1585,8 @@ export default function Home() {
   }
 
   async function handleChatSubmit(message: string) {
+    await ensureSessionId();
+
     appendMessage({
       id: makeId("msg"),
       kind: "text",
@@ -1745,6 +1830,8 @@ export default function Home() {
     imageBase64: string;
     mimeType: string;
   }) {
+    await ensureSessionId();
+
     const imageUrl = `data:${payload.mimeType};base64,${payload.imageBase64}`;
     appendMessage({
       id: makeId("msg"),
@@ -2189,7 +2276,7 @@ export default function Home() {
 
   return (
     <div className="relative flex min-h-0 flex-col bg-background">
-      <div className="mx-auto flex w-full min-w-0 flex-col items-stretch gap-3 px-1 pb-40 [&>*]:shrink-0">
+        <div className="mx-auto flex w-full min-w-0 flex-col items-stretch gap-3 px-1 pb-40 [&>*]:shrink-0">
           <div className="h-2 shrink-0" />
           {messages.map((message, index) => {
             const isLastMessage = index === messages.length - 1;

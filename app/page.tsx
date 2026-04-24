@@ -5,13 +5,14 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowRight, Dumbbell, Pencil, Trash2, X } from "lucide-react";
+import { ChevronRight, Dumbbell, Pencil, Trash2, X } from "lucide-react";
 import { StartWorkoutFab } from "@/components/home/start-workout-fab";
+import { ExerciseListRowIcon } from "@/components/workout/exercise-list-row-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { deleteWorkoutSession } from "@/lib/api";
 import { getExerciseBySlug } from "@/lib/exercises";
+import { deleteWorkoutSession } from "@/lib/api";
 import {
   computeVolume,
   flattenSets,
@@ -19,8 +20,8 @@ import {
   groupByExercise,
   type HistoryResponse,
 } from "@/lib/workout-history";
+import { AverageLiftLevelCard } from "@/components/strength/average-lift-level-card";
 import {
-  TIERS,
   computeAverageStrength,
   computeLiftProfiles,
   type LiftProfile,
@@ -86,9 +87,9 @@ export default function HomePage() {
 
   const spotlightLifts = useMemo(() => {
     const targets = [
-      { label: "Squat max", slug: "squat" },
-      { label: "Bench max", slug: "bench-press" },
-      { label: "Deadlift max", slug: "deadlift" },
+      { label: "Squat", slug: "squat" },
+      { label: "Bench", slug: "bench-press" },
+      { label: "Deadlift", slug: "deadlift" },
     ];
     const directBySlug = new Map<string, LiftProfile>();
     for (const target of targets) {
@@ -102,11 +103,21 @@ export default function HomePage() {
     const chosen = targets.map((target) => {
       const direct = directBySlug.get(target.slug) ?? null;
       if (direct) {
-        return { label: target.label, lift: direct, fallback: false };
+        return {
+          label: target.label,
+          catalogSlug: target.slug,
+          lift: direct,
+          fallback: false,
+        };
       }
       const fallback = liftProfiles.find((lift) => !used.has(lift.slug)) ?? null;
       if (fallback) used.add(fallback.slug);
-      return { label: target.label, lift: fallback, fallback: Boolean(fallback) };
+      return {
+        label: target.label,
+        catalogSlug: target.slug,
+        lift: fallback,
+        fallback: Boolean(fallback),
+      };
     });
     return chosen;
   }, [liftProfiles]);
@@ -131,100 +142,91 @@ export default function HomePage() {
     <div className="relative flex flex-col bg-background">
       <main className="flex-1 pb-36 pt-5">
         <div className="flex w-full flex-col gap-4">
-          <section className="rounded-2xl border bg-card p-4 shadow-sm">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold tracking-tight">
-                  Average lift level
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  Compared against StrengthLevel standards (kg)
-                </p>
+          <AverageLiftLevelCard
+            averageStrength={averageStrength}
+            footer={
+              <div className="w-full border-t border-border/50">
+                <Link
+                  href="/strength"
+                  className="group flex h-[45px] min-h-[45px] w-full min-w-0 items-center justify-between gap-2 px-4 text-xs font-medium text-primary transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span>View full exercise overview</span>
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-45" />
+                </Link>
               </div>
-              <Badge variant="outline">
-                {averageStrength
-                  ? `${Math.round(averageStrength.score * 100)}/100 · ${averageStrength.tier} · ${averageStrength.liftsCount} lifts`
-                  : "Not enough weighted data"}
-              </Badge>
-            </div>
-            <div className="space-y-2">
-              <div className="h-2 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${(averageStrength?.score ?? 0) * 100}%` }}
-                />
-              </div>
-              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                {TIERS.map((tier) => (
-                  <span key={tier}>{tier}</span>
-                ))}
-              </div>
-            </div>
-            <div className="mt-3 flex">
-              <Link
-                href="/strength"
-                className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 transition-colors hover:underline focus-visible:underline focus-visible:outline-none"
-              >
-                View full exercise overview
-                <ArrowRight className="h-3 w-3" />
-              </Link>
-            </div>
-          </section>
+            }
+          />
 
-          <section className="rounded-2xl border bg-card p-4 shadow-sm">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold tracking-tight">
-                  Key lift maxes
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  Top maxes from your strongest lifts
-                </p>
+          <section className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+            <div className="flex h-[45px] min-h-[45px] items-center border-b border-border/50 px-4">
+              <div className="flex w-full min-w-0 items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold tracking-tight">
+                    Key lift maxes
+                  </h2>
+                </div>
+                {sbdTotalKg !== null ? (
+                  <Badge
+                    variant="outline"
+                    className="h-fit max-w-full shrink-0 border-emerald-200/80 bg-emerald-50 font-normal tabular-nums text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100"
+                  >
+                    Total {Math.round(sbdTotalKg)} kg
+                  </Badge>
+                ) : null}
               </div>
-              {sbdTotalKg !== null ? (
-                <Badge variant="outline" className="shrink-0">
-                  Total {Math.round(sbdTotalKg)} kg
-                </Badge>
-              ) : null}
             </div>
-            <ul className="grid gap-2 sm:grid-cols-3">
-              {spotlightLifts.map((entry) => {
-                const record = entry.lift
-                  ? getExerciseBySlug(entry.lift.slug)
-                  : null;
+
+            <ul className="flex flex-col px-4 pb-0 pt-0">
+              {spotlightLifts.map((entry, index) => {
+                const name = entry.lift
+                  ? entry.lift.exerciseName
+                  : entry.label;
+                const iconSlug = entry.lift?.slug ?? entry.catalogSlug;
+                const record = getExerciseBySlug(iconSlug);
+                const iconPath = record?.iconPath ?? null;
                 return (
-                  <li key={entry.label} className="rounded-xl bg-muted/40 p-3">
-                    <div className="flex items-center gap-2.5">
-                      {record?.iconPath ? (
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background">
-                          <Image
-                            src={record.iconPath}
-                            alt=""
-                            width={32}
-                            height={32}
-                            className="h-8 w-8 object-contain"
-                            unoptimized
-                          />
+                  <li key={entry.label} className="relative">
+                    {index > 0 ? (
+                      <div
+                        className="pointer-events-none absolute top-0 right-0 left-0 h-px bg-border/70 dark:bg-border/50"
+                        aria-hidden
+                      />
+                    ) : null}
+                    <div className="flex items-center justify-between gap-3 py-2">
+                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/50">
+                          {iconPath ? (
+                            <Image
+                              src={iconPath}
+                              alt=""
+                              width={24}
+                              height={24}
+                              className="h-6 w-6 object-contain"
+                              unoptimized
+                            />
+                          ) : (
+                            <Dumbbell className="h-3.5 w-3.5 text-muted-foreground" />
+                          )}
                         </span>
-                      ) : null}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                          {entry.lift
-                            ? `${entry.lift.exerciseName} max`
-                            : entry.label}
+                        <p className="min-w-0 text-sm font-medium text-foreground capitalize">
+                          {name.toLowerCase()}
                         </p>
+                      </div>
+                      <div className="shrink-0 text-right">
                         {entry.lift ? (
                           <>
-                            <p className="mt-1 text-sm font-semibold">
-                              {Math.round(entry.lift.oneRmKg)} kg 1RM
+                            <p className="text-sm font-semibold tabular-nums text-foreground">
+                              {Math.round(entry.lift.oneRmKg)} kg
                             </p>
-                            <p className="truncate text-xs text-muted-foreground">
-                              {entry.lift.tier ?? " "}
-                            </p>
+                            {entry.lift.tier ? (
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {entry.lift.tier}
+                              </p>
+                            ) : null}
                           </>
                         ) : (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            No weighted sets yet
+                          <p className="text-xs text-muted-foreground">
+                            No data yet
                           </p>
                         )}
                       </div>
@@ -233,13 +235,14 @@ export default function HomePage() {
                 );
               })}
             </ul>
-            <div className="mt-3 flex">
+
+            <div className="w-full border-t border-border/50">
               <Link
                 href="/rep-maxes"
-                className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 transition-colors hover:underline focus-visible:underline focus-visible:outline-none"
+                className="group flex h-[45px] min-h-[45px] w-full min-w-0 items-center justify-between gap-2 px-4 text-xs font-medium text-primary transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                View rep max table
-                <ArrowRight className="h-3 w-3" />
+                <span>View rep max table</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-45" />
               </Link>
             </div>
           </section>
@@ -291,8 +294,8 @@ export default function HomePage() {
                 </section>
               ) : null}
 
-              <div className="flex flex-col items-center gap-3 rounded-3xl border border-dashed bg-card/40 px-5 py-9 text-center">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+              <div className="flex flex-col items-center gap-3 rounded-3xl border border-dashed border-sky-200/60 bg-card/40 px-5 py-9 text-center dark:border-sky-500/20">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-100 to-violet-100 text-sky-700 dark:from-sky-950/50 dark:to-violet-950/50 dark:text-sky-300">
                   <Dumbbell className="h-4 w-4" />
                 </div>
                 <div className="max-w-sm">
@@ -311,17 +314,25 @@ export default function HomePage() {
                 const { volume, unit: volumeUnit } = computeVolume(sets);
                 return (
                   <li key={session.id}>
-                    <section className="rounded-2xl border bg-card p-4 shadow-sm">
-                      <header className="mb-2 flex items-start justify-between gap-3">
+                    <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-card shadow-sm ring-1 ring-sky-500/[0.08] dark:border-border dark:ring-sky-400/10">
+                      <header className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-2">
                         <div className="min-w-0">
                           <h3 className="truncate text-sm font-semibold">
                             {formatWorkoutTitle(session.startedAt, session.name)}
                           </h3>
                         </div>
                         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                          <Badge variant="outline">{sets.length} sets</Badge>
+                          <Badge
+                            variant="outline"
+                            className="border-sky-200/80 bg-sky-50/90 font-normal text-sky-950 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100"
+                          >
+                            {sets.length} sets
+                          </Badge>
                           {volume > 0 ? (
-                            <Badge variant="outline">
+                            <Badge
+                              variant="outline"
+                              className="border-emerald-200/80 bg-emerald-50/90 font-normal text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100"
+                            >
                               {volume.toLocaleString()} {volumeUnit}
                             </Badge>
                           ) : null}
@@ -345,23 +356,36 @@ export default function HomePage() {
                           </button>
                         </div>
                       </header>
-                      <ul className="flex flex-col gap-1.5">
+                      <ul className="flex flex-col px-4 pt-0">
                         {exerciseGroups.length === 0 ? (
-                          <li className="text-xs text-muted-foreground">
+                          <li className="py-2.5 text-xs text-muted-foreground">
                             No sets logged.
                           </li>
                         ) : (
-                          exerciseGroups.map((group) => (
+                          exerciseGroups.map((group, index) => (
                             <li
                               key={group.exerciseName}
-                              className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-2.5 py-1.5 text-sm"
+                              className="relative"
                             >
-                              <span className="truncate pr-2 font-medium">
-                                {group.exerciseName}
-                              </span>
-                              <span className="shrink-0 text-muted-foreground">
-                                {group.summary}
-                              </span>
+                              {index > 0 ? (
+                                <div
+                                  className="pointer-events-none absolute left-0 right-0 top-0 h-px bg-border/80 dark:bg-border/50"
+                                  aria-hidden
+                                />
+                              ) : null}
+                              <div className="flex items-center justify-between gap-3 py-2.5 pr-0 text-sm">
+                                <div className="flex min-w-0 flex-1 items-center gap-2.5 pr-1">
+                                  <ExerciseListRowIcon
+                                    exerciseName={group.exerciseName}
+                                  />
+                                  <span className="truncate font-medium">
+                                    {group.exerciseName}
+                                  </span>
+                                </div>
+                                <span className="shrink-0 text-right text-xs text-muted-foreground tabular-nums sm:text-sm">
+                                  {group.summary}
+                                </span>
+                              </div>
                             </li>
                           ))
                         )}

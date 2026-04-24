@@ -46,12 +46,33 @@ export function mapSupabaseRouteError(error: unknown): {
     };
   }
 
+  // Undefined column (e.g. chat_transcript not applied — run latest migrations).
+  if (code === "42703") {
+    return {
+      status: 503,
+      message:
+        "Database schema is missing a column (apply migrations: supabase/migrations, then supabase db push or run SQL in the Supabase SQL editor).",
+    };
+  }
+
   // Table missing from PostgREST schema cache (migration not applied).
   if (code === "PGRST205") {
     return {
       status: 503,
       message:
         "Supabase tables are missing. Apply the migration in supabase/migrations/20260423193000_init.sql.",
+    };
+  }
+
+  const msg = (parsed?.message ?? "").toLowerCase();
+  if (
+    msg.includes("chat_transcript") ||
+    (msg.includes("column") && msg.includes("does not exist"))
+  ) {
+    return {
+      status: 503,
+      message:
+        "Chat transcript storage is not set up. Apply supabase/migrations/20260425120000_chat_transcript.sql to your database (e.g. supabase db push or paste the SQL in the Supabase SQL editor), then try again.",
     };
   }
 

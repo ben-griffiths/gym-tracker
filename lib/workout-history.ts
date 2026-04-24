@@ -1,3 +1,5 @@
+import { getExerciseByName } from "@/lib/exercises";
+
 export type HistorySet = {
   id: string;
   exercise?: string;
@@ -15,8 +17,11 @@ export type HistorySession = {
   id: string;
   name: string;
   startedAt?: string;
+  /** Serialized workout chat for `/workout?edit=` rehydration; absent on older rows. */
+  chatTranscript?: unknown | null;
   sets?: HistorySet[];
   exercises?: Array<{
+    orderIndex?: number;
     exercise?: { name: string } | null;
     customExerciseName?: string | null;
     sets: HistorySet[];
@@ -119,6 +124,49 @@ export function groupByExercise(
       summary: summarizeSets(group),
     };
   });
+}
+
+/**
+ * Build exercise groups in `session_exercises` order, including catalog exercises
+ * with **no sets** (so they still appear on `/workout?edit=`). Falls back to
+ * set-only order when the API did not return `exercises` (e.g. legacy clients).
+ */
+export function rehydrationExerciseGroupsInOrder(
+  session: HistorySession,
+): ExerciseGroupSummary[] {
+  const fromSetsOnly = groupByExercise(flattenSets(session));
+  const setByName = new Map(
+    fromSetsOnly.map((g) => [g.exerciseName, g.sets] as const),
+  );
+
+  if (!session.exercises?.length) {
+    return fromSetsOnly;
+  }
+
+  const ordered = [...session.exercises].sort(
+    (a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0),
+  );
+  const result: ExerciseGroupSummary[] = [];
+  const seenSlugs = new Set<string>();
+
+  for (const se of ordered) {
+    const name =
+      se.exercise?.name?.trim() ||
+      se.customExerciseName?.trim() ||
+      "Exercise";
+    const record = getExerciseByName(name);
+    if (!record) continue;
+    if (seenSlugs.has(record.slug)) continue;
+    seenSlugs.add(record.slug);
+    const sets = setByName.get(name) ?? [];
+    result.push({
+      exerciseName: name,
+      sets,
+      summary: summarizeSets(sets),
+    });
+  }
+
+  return result;
 }
 
 export function computeVolume(sets: HistorySet[]): {

@@ -100,6 +100,34 @@ export async function deleteWorkoutSession(sessionId: string) {
   return response.ok ? response.json() : null;
 }
 
+export async function patchWorkoutTranscript(
+  sessionId: string,
+  chatTranscript: unknown,
+) {
+  const response = await fetch(`/api/workouts/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chatTranscript }),
+  });
+  await throwIfNotOk(response, "Failed to save chat");
+}
+
+/** Ensures a `session_exercises` row exists (e.g. block with zero sets). */
+export async function registerSessionExercise(
+  sessionId: string,
+  exerciseName: string,
+) {
+  const response = await fetch("/api/session-exercises", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, exercise: exerciseName }),
+  });
+  await throwIfNotOk(response, "Failed to register exercise");
+  return response.json() as Promise<{
+    sessionExercise: { id: string; sessionId: string; orderIndex: number };
+  }>;
+}
+
 export async function createSet(payload: {
   sessionId: string;
   exercise: string;

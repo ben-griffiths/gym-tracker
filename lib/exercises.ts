@@ -65,6 +65,13 @@ export function getExerciseByName(name: string): ExerciseRecord | null {
   return BY_NAME.get(name.toLowerCase().trim()) ?? null;
 }
 
+/** Best-effort catalog match for a name stored on logged sets (fuzzy if needed). */
+export function getExerciseByLoggedName(name: string): ExerciseRecord | null {
+  const trimmed = name?.trim();
+  if (!trimmed) return null;
+  return getExerciseByName(trimmed) ?? searchExercises(trimmed, 1)[0] ?? null;
+}
+
 function tokenize(input: string): string[] {
   return input
     .toLowerCase()

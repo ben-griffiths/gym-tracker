@@ -185,11 +185,11 @@ export default function RepMaxesPage() {
             <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
               <div className="overflow-x-auto">
                 <table className="min-w-full w-max border-collapse text-sm">
-                  <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                    <tr>
+                  <thead className="bg-card text-xs font-normal uppercase tracking-wide text-foreground">
+                    <tr className="h-[45px]">
                       <th
                         scope="col"
-                        className="sticky left-0 z-20 min-w-36 bg-muted px-2 py-2 text-left font-medium after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border"
+                        className="sticky left-0 z-20 h-[45px] min-h-[45px] min-w-36 bg-card pl-4 pr-2 align-middle text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border"
                       >
                         Exercise
                       </th>
@@ -197,14 +197,14 @@ export default function RepMaxesPage() {
                         <th
                           key={reps}
                           scope="col"
-                          className="min-w-13 px-2 py-2 text-center font-medium"
+                          className="h-[45px] min-h-[45px] min-w-13 bg-card px-2 text-center align-middle"
                         >
                           {reps}
                         </th>
                       ))}
                       <th
                         scope="col"
-                        className="sticky right-0 z-20 bg-muted px-2 py-2 text-center font-semibold text-foreground before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border"
+                        className="sticky right-0 z-20 h-[45px] min-h-[45px] bg-card px-2 text-center align-middle before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border"
                       >
                         Est&nbsp;1RM
                       </th>
@@ -223,7 +223,7 @@ export default function RepMaxesPage() {
                         >
                           <th
                             scope="row"
-                            className="sticky left-0 z-10 min-w-36 bg-card px-2 py-2 text-left font-medium after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border"
+                            className="sticky left-0 z-10 min-w-36 bg-card py-2 pl-4 pr-2 text-left font-medium after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border"
                           >
                             <div className="flex min-w-0 items-center gap-1.5">
                               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/50">
