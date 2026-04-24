@@ -61,8 +61,7 @@ LiftLog ships as an **installable PWA** ([Next.js PWA guide](https://nextjs.org/
 
 - **Production:** the app must be served over **HTTPS** (e.g. Vercel) for browsers to offer install / add to home screen.
 - **Local install testing:** run `npx next dev --experimental-https` so the secure context matches what install prompts expect.
-
-On the home page, a dismissible hint explains **Share → Add to Home Screen** on iOS; it stays hidden when already running in standalone mode.
+- **iOS:** use **Share → Add to Home Screen** when the browser does not show its own install affordance.
 
 ## Available Scripts
 

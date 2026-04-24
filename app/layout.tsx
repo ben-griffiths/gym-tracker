@@ -3,7 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AppHeader } from "@/components/layout/app-header";
 import { AppScrollArea } from "@/components/layout/app-scroll-area";
-import { InstallHint } from "@/components/pwa/install-hint";
 import { Providers } from "@/components/providers";
 
 const geistSans = Geist({
@@ -56,7 +55,6 @@ export default function RootLayout({
       <body className="flex h-dvh flex-col overflow-hidden bg-muted/30">
         <Providers>
           <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
-            <InstallHint />
             <AppHeader />
             <AppScrollArea>{children}</AppScrollArea>
           </div>
