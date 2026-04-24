@@ -45,8 +45,7 @@ cp .env.example .env
 # Option A — Supabase CLI (requires supabase login + link):
 # npx supabase db push
 
-# Option B — run the SQL in the dashboard SQL editor:
-# supabase/migrations/20260423193000_init.sql
+# Option B — run migration SQL in the Supabase SQL editor (in order under supabase/migrations/).
 ```
 
 5. Run development server:
