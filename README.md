@@ -39,10 +39,13 @@ cp .env.example .env
 # - NEXT_PUBLIC_SUPABASE_ANON_KEY
 ```
 
-4. Apply SQL migration to Supabase:
+4. Apply SQL migrations to Supabase (pick one):
 
 ```bash
-# run the SQL in:
+# Option A — Supabase CLI (requires supabase login + link):
+# npx supabase db push
+
+# Option B — run the SQL in the dashboard SQL editor:
 # supabase/migrations/20260423193000_init.sql
 ```
 
