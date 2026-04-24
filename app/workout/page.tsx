@@ -17,6 +17,7 @@ import { CameraCandidates } from "@/components/chat/camera-candidates";
 import { Composer } from "@/components/chat/composer";
 import { ExerciseDescription } from "@/components/chat/exercise-description";
 import { ExerciseOptions } from "@/components/chat/exercise-options";
+import { AssistantTypingDots } from "@/components/chat/assistant-typing-dots";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import {
   RecentWorkoutSuggestions,
@@ -166,6 +167,7 @@ export default function Home() {
   const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(
     () => new Set<string>(),
   );
+  const [cameraBusy, setCameraBusy] = useState(false);
   // Refs mirror state so async flows (chat -> create block -> append sets) can
   // read the latest values without waiting for React to flush setState.
   const blocksRef = useRef<Record<string, ExerciseBlock>>({});
@@ -1943,7 +1945,11 @@ export default function Home() {
   const hasAnyChip = basicChips.length > 0 || rpeChips.length > 0;
 
   const cameraTrigger = (trigger: ReactNode) => (
-    <CameraPopup onCapture={handleCameraCapture} trigger={trigger} />
+    <CameraPopup
+      onCapture={handleCameraCapture}
+      onBusyChange={setCameraBusy}
+      trigger={trigger}
+    />
   );
 
   // Collapsed cards in message order (excluding deleted blocks). Used to
@@ -2158,8 +2164,10 @@ export default function Home() {
             return null;
           })}
 
-          {chatMutation.isPending ? (
-            <MessageBubble role="system">Thinking...</MessageBubble>
+          {chatMutation.isPending || cameraBusy ? (
+            <MessageBubble role="assistant" className="pt-0.5">
+              <AssistantTypingDots />
+            </MessageBubble>
           ) : null}
 
           {!hasAnyBlock && !hasUserMessage && recentWorkouts.length > 0 ? (
@@ -2201,6 +2209,7 @@ export default function Home() {
             onSubmit={handleChatSubmit}
             cameraTrigger={cameraTrigger}
             disabled={false}
+            isLoading={cameraBusy}
           />
         </div>
       </footer>

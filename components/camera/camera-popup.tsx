@@ -10,10 +10,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { Loader2 } from "lucide-react";
 
 type CameraPopupProps = {
   onCapture: (payload: { imageBase64: string; mimeType: string }) => Promise<void>;
+  /** Fires for the full pick → read → `onCapture` window (drives global chat loading UI). */
+  onBusyChange?: (busy: boolean) => void;
   trigger: ReactNode;
 };
 
@@ -30,20 +31,22 @@ function fileToBase64(file: File) {
   });
 }
 
-export function CameraPopup({ onCapture, trigger }: CameraPopupProps) {
+export function CameraPopup({ onCapture, onBusyChange, trigger }: CameraPopupProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [inFlight, setInFlight] = useState(false);
 
   async function handleFileSelect(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setBusy(true);
+    onBusyChange?.(true);
+    setInFlight(true);
     try {
       const imageBase64 = await fileToBase64(file);
       await onCapture({ imageBase64, mimeType: file.type || "image/jpeg" });
     } finally {
-      setBusy(false);
+      onBusyChange?.(false);
+      setInFlight(false);
       event.target.value = "";
     }
   }
@@ -58,6 +61,7 @@ export function CameraPopup({ onCapture, trigger }: CameraPopupProps) {
 
   const triggerEl = trigger as ReactElement<{
     onClick?: (e: MouseEvent) => void;
+    disabled?: boolean;
   }>;
 
   const triggerWithPicker = cloneElement(triggerEl, {
@@ -65,6 +69,7 @@ export function CameraPopup({ onCapture, trigger }: CameraPopupProps) {
       triggerEl.props.onClick?.(event);
       openCameraOrPicker();
     },
+    disabled: inFlight || Boolean(triggerEl.props.disabled),
   });
 
   return (
@@ -77,22 +82,10 @@ export function CameraPopup({ onCapture, trigger }: CameraPopupProps) {
         capture="environment"
         className="sr-only"
         onChange={handleFileSelect}
-        disabled={busy}
+        disabled={inFlight}
         aria-hidden
         tabIndex={-1}
       />
-      {busy ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
-          role="status"
-          aria-live="polite"
-        >
-          <div className="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm shadow-lg">
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-            Analyzing image…
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }

@@ -128,3 +128,33 @@
     @apply font-sans;
   }
 }
+
+/* Assistant typing dots — subtle bounce + stagger (AssistantTypingDots) */
+@keyframes assistant-typing-dot {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -5px, 0);
+  }
+}
+
+/* Longhand (no `animation` shorthand) so per-dot `animation-delay` is not reset. */
+.assistant-typing-dot {
+  animation-name: assistant-typing-dot;
+  animation-duration: 0.7s;
+  animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+.assistant-typing-dot:nth-child(1) {
+  animation-delay: 0ms;
+}
+.assistant-typing-dot:nth-child(2) {
+  animation-delay: 200ms;
+}
+.assistant-typing-dot:nth-child(3) {
+  animation-delay: 400ms;
+}
