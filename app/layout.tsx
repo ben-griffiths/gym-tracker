@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { AppHeader } from "@/components/layout/app-header";
+import { AppHeaderCenterProvider } from "@/components/layout/app-header-center-context";
 import { AppScrollArea } from "@/components/layout/app-scroll-area";
 import { Providers } from "@/components/providers";
 
@@ -54,10 +55,12 @@ export default function RootLayout({
     >
       <body className="flex h-dvh flex-col overflow-hidden bg-background">
         <Providers>
-          <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
-            <AppHeader />
-            <AppScrollArea>{children}</AppScrollArea>
-          </div>
+          <AppHeaderCenterProvider>
+            <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
+              <AppHeader />
+              <AppScrollArea>{children}</AppScrollArea>
+            </div>
+          </AppHeaderCenterProvider>
         </Providers>
       </body>
     </html>

@@ -29,7 +29,7 @@ export async function createWorkoutSession(input: {
 
   return response.json() as Promise<{
     group: { id: string; name: string };
-    session: { id: string; name: string };
+    session: { id: string; name: string; startedAt?: string };
     storageMode?: "database";
   }>;
 }

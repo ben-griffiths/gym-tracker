@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Link from "next/link";
+import { useAppHeaderCenter } from "@/components/layout/app-header-center-context";
 import { useAppScrollRootRef } from "@/components/layout/app-scroll-area";
 import { CameraPopup } from "@/components/camera/camera-popup";
 import { CameraCandidates } from "@/components/chat/camera-candidates";
@@ -214,9 +215,13 @@ export default function Home() {
     () => new Set<string>(),
   );
   const [cameraBusy, setCameraBusy] = useState(false);
+  const [sessionStartedAtSeed, setSessionStartedAtSeed] = useState<
+    string | null
+  >(null);
   const [exerciseBlockHeights, setExerciseBlockHeights] = useState<
     Record<string, number>
   >({});
+  const { setCustomTitle } = useAppHeaderCenter();
   const storageModeRef = useRef<"database" | null>(null);
   const skipTranscriptSaveRef = useRef(false);
   const transcriptDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -357,6 +362,9 @@ export default function Home() {
       sessionIdRef.current = payload.session.id;
       setStorageMode(payload.storageMode ?? null);
       storageModeRef.current = payload.storageMode ?? null;
+      if (payload.session.startedAt) {
+        setSessionStartedAtSeed(payload.session.startedAt);
+      }
       queueMicrotask(() => {
         void flushTranscriptSave();
       });
@@ -413,6 +421,40 @@ export default function Home() {
     retry: false,
     refetchOnWindowFocus: false,
   });
+
+  const sessionFromHistory = useMemo(() => {
+    if (!sessionId || !historyQuery.data) return null;
+    for (const group of historyQuery.data.groups) {
+      const found = group.sessions.find((s) => s.id === sessionId);
+      if (found) return found;
+    }
+    return null;
+  }, [sessionId, historyQuery.data]);
+
+  useEffect(() => {
+    if (sessionFromHistory) setSessionStartedAtSeed(null);
+  }, [sessionFromHistory]);
+
+  useEffect(() => {
+    if (!sessionId) setSessionStartedAtSeed(null);
+  }, [sessionId]);
+
+  const sessionStartedAtForHeader =
+    sessionFromHistory?.startedAt ?? sessionStartedAtSeed;
+
+  useEffect(() => {
+    if (sessionStartedAtForHeader) {
+      setCustomTitle(formatWorkoutTitle(sessionStartedAtForHeader));
+    } else {
+      setCustomTitle(null);
+    }
+  }, [sessionStartedAtForHeader, setCustomTitle]);
+
+  useEffect(() => {
+    return () => {
+      setCustomTitle(null);
+    };
+  }, [setCustomTitle]);
 
   const recentWorkouts = useMemo<RecentWorkoutSummary[]>(() => {
     const groups = historyQuery.data?.groups ?? [];

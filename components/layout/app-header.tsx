@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AvatarCircle } from "@/components/profile/avatar-circle";
+import { useAppHeaderCenter } from "@/components/layout/app-header-center-context";
 import { formatWorkoutTitle } from "@/lib/workout-history";
 
 const PAGE_HEADER_TITLES: Record<string, string> = {
@@ -16,11 +17,12 @@ export function AppHeader() {
   const pathname = usePathname();
   const isHome = pathname === "/";
   const pageTitle = PAGE_HEADER_TITLES[pathname];
+  const { customTitle } = useAppHeaderCenter();
   const [nowLabel, setNowLabel] = useState(() =>
     formatWorkoutTitle(new Date().toISOString()),
   );
   useEffect(() => {
-    if (pageTitle) return;
+    if (pageTitle || customTitle) return;
     const update = () =>
       setNowLabel(formatWorkoutTitle(new Date().toISOString()));
     update();
@@ -33,7 +35,7 @@ export function AppHeader() {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [pageTitle]);
+  }, [pageTitle, customTitle]);
 
   return (
     <header className="z-30 flex h-[75px] min-h-[75px] shrink-0 border-b bg-card">
@@ -62,6 +64,10 @@ export function AppHeader() {
             {pageTitle ? (
               <h1 className="min-w-0 truncate text-center text-sm font-semibold text-foreground">
                 {pageTitle}
+              </h1>
+            ) : customTitle ? (
+              <h1 className="min-w-0 truncate text-center text-sm font-semibold tabular-nums text-foreground">
+                {customTitle}
               </h1>
             ) : (
               <p
