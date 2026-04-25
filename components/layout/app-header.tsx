@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AvatarCircle } from "@/components/profile/avatar-circle";
 import { useAppHeaderCenter } from "@/components/layout/app-header-center-context";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { formatWorkoutTitle } from "@/lib/workout-history";
 
 const PAGE_HEADER_TITLES: Record<string, string> = {
@@ -50,10 +51,13 @@ export function AppHeader() {
                 Mobile-first lifting journal
               </p>
             </div>
-            <AvatarCircle className="!h-11 !w-11 text-sm" />
+            <div className="flex shrink-0 items-center gap-0.5">
+              <ThemeToggle />
+              <AvatarCircle className="!h-11 !w-11 text-sm" />
+            </div>
           </div>
         ) : (
-          <div className="grid w-full grid-cols-[2.75rem_1fr_2.75rem] items-center gap-1">
+          <div className="grid w-full grid-cols-[2.75rem_1fr_auto] items-center gap-1">
             <Link
               href="/"
               aria-label="Back to home"
@@ -78,7 +82,8 @@ export function AppHeader() {
                 {nowLabel}
               </p>
             )}
-            <div className="flex justify-end">
+            <div className="flex min-w-0 items-center justify-end gap-0.5">
+              <ThemeToggle />
               <AvatarCircle className="!h-11 !w-11 text-sm" />
             </div>
           </div>

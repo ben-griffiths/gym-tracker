@@ -2,6 +2,7 @@
 
 import { ReactNode, useMemo, useState } from "react";
 import Image from "next/image";
+import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { CheckCircle2, ExternalLink, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -73,12 +74,11 @@ export function ExerciseGuideSheet({
         >
           <div className="flex items-center gap-3 border-b bg-muted/40 p-4 pr-14">
             <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-background">
-              <Image
+              <ExerciseIconImage
                 src={exercise.iconPath}
-                alt=""
                 width={40}
                 height={40}
-                className="h-10 w-10 object-contain"
+                className="h-10 w-10"
                 unoptimized
               />
             </span>
@@ -156,7 +156,7 @@ export function ExerciseGuideSheet({
                                 src={group.imagePath}
                                 alt={`${exercise.name} position ${groupIndex + 1}`}
                                 fill
-                                className="object-contain"
+                                className="object-contain dark:invert"
                                 unoptimized
                                 sizes="(max-width: 640px) 100vw, 640px"
                               />

@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dumbbell } from "lucide-react";
@@ -228,12 +228,11 @@ export default function RepMaxesPage() {
                             <div className="flex min-w-0 items-center gap-1.5">
                               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/50">
                                 {iconPath ? (
-                                  <Image
+                                  <ExerciseIconImage
                                     src={iconPath}
-                                    alt=""
                                     width={24}
                                     height={24}
-                                    className="h-6 w-6 object-contain"
+                                    className="h-6 w-6"
                                     unoptimized
                                   />
                                 ) : (

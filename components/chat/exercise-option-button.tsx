@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import { cn } from "@/lib/utils";
 import type { ExerciseRecord } from "@/lib/types/workout";
 
@@ -32,12 +32,11 @@ export function ExerciseOptionButton({
       )}
     >
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-        <Image
+        <ExerciseIconImage
           src={exercise.iconPath}
-          alt=""
           width={36}
           height={36}
-          className="h-9 w-9 object-contain"
+          className="h-9 w-9"
           unoptimized
         />
       </span>

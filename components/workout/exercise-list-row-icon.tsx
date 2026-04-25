@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { Dumbbell } from "lucide-react";
 import { getExerciseByLoggedName } from "@/lib/exercises";
 import { cn } from "@/lib/utils";
+import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 
 type ExerciseListRowIconProps = {
   exerciseName: string;
@@ -24,12 +24,11 @@ export function ExerciseListRowIcon({
       )}
     >
       {record?.iconPath ? (
-        <Image
+        <ExerciseIconImage
           src={record.iconPath}
-          alt=""
           width={28}
           height={28}
-          className="h-7 w-7 object-contain"
+          className="h-7 w-7"
           unoptimized
         />
       ) : (

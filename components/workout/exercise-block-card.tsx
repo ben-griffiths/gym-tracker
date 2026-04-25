@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import Image from "next/image";
+import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import {
   ChevronDown,
   ChevronUp,
@@ -169,12 +169,11 @@ export function ExerciseBlockCard({
               deleted && "opacity-50",
             )}
           >
-            <Image
+            <ExerciseIconImage
               src={exercise.iconPath}
-              alt=""
               width={36}
               height={36}
-              className="h-9 w-9 object-contain"
+              className="h-9 w-9"
               unoptimized
             />
           </span>

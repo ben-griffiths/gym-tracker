@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dumbbell } from "lucide-react";
@@ -125,12 +125,11 @@ export default function StrengthOverviewPage() {
                             <div className="flex items-center gap-3">
                               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted/50">
                                 {record?.iconPath ? (
-                                  <Image
+                                  <ExerciseIconImage
                                     src={record.iconPath}
-                                    alt=""
                                     width={36}
                                     height={36}
-                                    className="h-9 w-9 object-contain"
+                                    className="h-9 w-9"
                                     unoptimized
                                   />
                                 ) : (
@@ -233,12 +232,11 @@ export default function StrengthOverviewPage() {
                             ) : null}
                             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted/50">
                               {record?.iconPath ? (
-                                <Image
+                                <ExerciseIconImage
                                   src={record.iconPath}
-                                  alt=""
                                   width={32}
                                   height={32}
-                                  className="h-8 w-8 object-contain"
+                                  className="h-8 w-8"
                                   unoptimized
                                 />
                               ) : (

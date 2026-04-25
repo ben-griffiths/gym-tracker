@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -196,12 +196,11 @@ export default function HomePage() {
                       <div className="flex min-w-0 flex-1 items-center gap-2.5">
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/50">
                           {iconPath ? (
-                            <Image
+                            <ExerciseIconImage
                               src={iconPath}
-                              alt=""
                               width={24}
                               height={24}
-                              className="h-6 w-6 object-contain"
+                              className="h-6 w-6"
                               unoptimized
                             />
                           ) : (
