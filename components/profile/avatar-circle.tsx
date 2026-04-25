@@ -99,7 +99,7 @@ export function AvatarCircle({ className }: AvatarCircleProps) {
         type="button"
         onClick={() => setOpen((value) => !value)}
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-full border border-sky-200/60 bg-card text-xs font-semibold text-foreground shadow-sm ring-1 ring-sky-500/15 transition-colors hover:bg-muted dark:border-sky-500/30 dark:ring-sky-400/15",
+          "flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-xs font-semibold text-foreground shadow-sm transition-colors hover:bg-muted",
           className,
         )}
         title={email ?? "Profile"}
