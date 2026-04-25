@@ -77,6 +77,26 @@ function setsOf(count: number, reps = 5, weight = 100): SetDetail[] {
 }
 
 describe("planChatTurn", () => {
+  it("prefers trimming set count over LLM field updates when user says 'just N sets'", () => {
+    const actions = planChatTurn({
+      suggestion: makeSuggestion({
+        userMessage: "actually it should be just 5 sets",
+        updates: [
+          {
+            targetSetNumbers: [1, 2, 3, 4, 5],
+            reps: 5,
+          },
+        ],
+      }),
+      hasActiveBlock: true,
+      activeBlockSetCount: 10,
+      bufferedSets: [],
+    });
+    expect(actions).toEqual<ChatAction[]>([
+      { type: "trimActiveBlockToCount", keepCount: 5 },
+    ]);
+  });
+
   describe("buffering sets without an exercise", () => {
     it("buffers sets and prompts for an exercise when there is no active block", () => {
       // User: "100kg 5 reps 10 sets"

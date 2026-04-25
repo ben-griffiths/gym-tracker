@@ -151,6 +151,29 @@ describe("assembleSuggestion", () => {
     });
   });
 
+  it("strips null reps/weight on update_sets so clearing RPE does not wipe load/reps", () => {
+    const suggestion = assembleSuggestion({
+      message: "remove rpe from set 1",
+      context: undefined,
+      fallback: emptyFallback,
+      toolCalls: [
+        {
+          name: "update_sets",
+          arguments: JSON.stringify({
+            targetSetNumbers: [6],
+            rpe: null,
+            reps: null,
+            weight: null,
+          }),
+        },
+      ],
+    });
+    expect(suggestion.updates[0]).toEqual({
+      targetSetNumbers: [6],
+      rpe: null,
+    });
+  });
+
   it("maps remove_block + replace_block to block operations", () => {
     const suggestion = assembleSuggestion({
       message: "scrap the deadlift, change squat to bench",

@@ -1,14 +1,51 @@
 import { describe, expect, it } from "vitest";
+import type { ChatContext } from "../lib/types/workout";
 import {
   inferWeightUnit,
   mergeScaleSuggestions,
   parseEffort,
   parseFallbackSuggestion,
   parseNumbers,
+  parsePerSetFieldUpdates,
   parseSets,
 } from "../lib/workout-parser";
 
 describe("workout parser", () => {
+  it("parses per-set weight phrases into separate updates", () => {
+    const ctx: ChatContext = {
+      sets: Array.from({ length: 8 }, (_, i) => ({
+        setNumber: i + 1,
+        reps: 4,
+        weight: 30,
+        weightUnit: "kg" as const,
+      })),
+    };
+    const msg =
+      "reorder machine row sets so that set 5 is 120kg and set 6 is 100kg and set 7 is 60kg and set 8 is 40kg";
+    const updates = parsePerSetFieldUpdates(msg, ctx);
+    expect(updates).toHaveLength(4);
+    expect(updates[0]).toMatchObject({
+      targetSetNumbers: [5],
+      weight: 120,
+      weightUnit: "kg",
+    });
+    expect(updates[1]).toMatchObject({
+      targetSetNumbers: [6],
+      weight: 100,
+      weightUnit: "kg",
+    });
+    expect(updates[2]).toMatchObject({
+      targetSetNumbers: [7],
+      weight: 60,
+      weightUnit: "kg",
+    });
+    expect(updates[3]).toMatchObject({
+      targetSetNumbers: [8],
+      weight: 40,
+      weightUnit: "kg",
+    });
+  });
+
   it("extracts numbers from free text", () => {
     expect(parseNumbers("12/10/8 reps at 20/22.5/25kg")).toEqual([
       12, 10, 8, 20, 22.5, 25,

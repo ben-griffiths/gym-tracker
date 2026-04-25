@@ -974,6 +974,30 @@ export default function Home() {
     }
   }
 
+  /** Remove sets after index keepCount-1. Returns how many were removed. */
+  function trimBlockToSetCount(blockId: string, keepCount: number): number {
+    const block = blocksRef.current[blockId];
+    if (!block || keepCount < 0) return 0;
+    if (block.sets.length <= keepCount) return 0;
+    const toRemove = block.sets.slice(keepCount);
+    const nextSets: BlockSet[] = block.sets
+      .slice(0, keepCount)
+      .map((entry, index) => ({ ...entry, setNumber: index + 1 }));
+    commitBlocks({
+      ...blocksRef.current,
+      [blockId]: { ...block, sets: nextSets },
+    });
+    for (const entry of toRemove) {
+      if (entry.dbId) {
+        void deleteSet(entry.dbId).catch(() => undefined);
+      }
+    }
+    if (toRemove.length > 0) {
+      void queryClient.invalidateQueries({ queryKey: ["workouts"] });
+    }
+    return toRemove.length;
+  }
+
   async function duplicateSetInBlock(blockId: string, setId: string) {
     const block = blocksRef.current[blockId];
     if (!block) return;
@@ -1503,8 +1527,10 @@ export default function Home() {
       if (!relevant) return setEntry;
       return {
         ...setEntry,
-        ...(relevant.reps !== undefined ? { reps: relevant.reps } : {}),
-        ...(relevant.weight !== undefined ? { weight: relevant.weight } : {}),
+        // `reps` / `weight` null must not clear cells (models often send null
+        // to mean "omit"). Only numeric updates apply. Effort null clears.
+        ...(relevant.reps != null ? { reps: relevant.reps } : {}),
+        ...(relevant.weight != null ? { weight: relevant.weight } : {}),
         ...(relevant.weightUnit !== undefined
           ? { weightUnit: relevant.weightUnit }
           : {}),
@@ -1649,35 +1675,51 @@ export default function Home() {
       return;
     }
 
+    const activeForPlan = activeBlockIdRef.current
+      ? blocksRef.current[activeBlockIdRef.current]
+      : null;
+    const activeSetCount =
+      activeForPlan && !activeForPlan.deleted
+        ? activeForPlan.sets.length
+        : 0;
     const actions = planChatTurn({
       suggestion,
       hasActiveBlock: Boolean(activeBlockIdRef.current),
+      activeBlockSetCount: activeSetCount,
       bufferedSets: bufferedSetsRef.current,
     });
+
+    let assistantEmitted = false;
+    const pushAssistantText = (text: string) => {
+      appendMessage({
+        id: makeId("msg"),
+        kind: "text",
+        role: "assistant",
+        text,
+      });
+      assistantEmitted = true;
+    };
 
     for (const action of actions) {
       switch (action.type) {
         case "applyBlockOps": {
           const feedback = applyBlockOperations(action.operations);
           for (const line of feedback) {
-            appendMessage({
-              id: makeId("msg"),
-              kind: "text",
-              role: "assistant",
-              text: line,
-            });
+            pushAssistantText(line);
+          }
+          if (action.operations.length > 0 && feedback.length === 0) {
+            pushAssistantText("No matching exercises to change.");
           }
           break;
         }
         case "applyUpdates": {
           const changed = await applyUpdatesToActiveBlock(action.updates);
           if (changed > 0) {
-            appendMessage({
-              id: makeId("msg"),
-              kind: "text",
-              role: "assistant",
-              text: `Updated ${changed} ${changed === 1 ? "set" : "sets"}.`,
-            });
+            pushAssistantText(
+              `Updated ${changed} ${changed === 1 ? "set" : "sets"}.`,
+            );
+          } else {
+            pushAssistantText("No sets matched that update.");
           }
           break;
         }
@@ -1688,6 +1730,9 @@ export default function Home() {
           }
           if (action.sets.length > 0) {
             await appendSetsToBlock(blockId, action.sets, "chat", message);
+            pushAssistantText(
+              `Added ${action.sets.length} ${action.sets.length === 1 ? "set" : "sets"} to ${action.exercise.name}.`,
+            );
           }
           // Sets have landed on a real block now — the buffer is drained.
           bufferedSetsRef.current = [];
@@ -1708,6 +1753,7 @@ export default function Home() {
               pendingSets: [],
               boundBlockId: blockId,
             });
+            assistantEmitted = true;
           }
           break;
         }
@@ -1718,28 +1764,35 @@ export default function Home() {
               clearSetsInBlock(activeId);
             }
             await appendSetsToBlock(activeId, action.sets, "chat", message);
+            if (action.sets.length > 0) {
+              const name = blocksRef.current[activeId]?.exercise.name ?? "exercise";
+              pushAssistantText(
+                `Added ${action.sets.length} ${action.sets.length === 1 ? "set" : "sets"} to ${name}.`,
+              );
+            }
             bufferedSetsRef.current = [];
           }
           break;
         }
         case "resetActiveBlockSets": {
           const activeId = activeBlockIdRef.current;
-          if (activeId) clearSetsInBlock(activeId);
+          if (activeId) {
+            clearSetsInBlock(activeId);
+            const name =
+              blocksRef.current[activeId]?.exercise.name ?? "this exercise";
+            pushAssistantText(`Cleared all sets in ${name}.`);
+          }
           break;
         }
         case "scaleActiveBlockReps": {
           const changed = await scaleActiveBlockRepsByRpe(action.targetRpe);
-          appendMessage({
-            id: makeId("msg"),
-            kind: "text",
-            role: "assistant",
-            text:
-              changed > 0
-                ? `Filled in reps on ${changed} ${changed === 1 ? "set" : "sets"} targeting RPE ${action.targetRpe} (~${10 - action.targetRpe} reps in reserve).`
-                : activeExerciseOneRmKg === null
-                  ? "I need an estimated 1RM for this lift first — log a heavier set or two and try again."
-                  : "Couldn't find any weighted sets to scale reps on.",
-          });
+          pushAssistantText(
+            changed > 0
+              ? `Filled in reps on ${changed} ${changed === 1 ? "set" : "sets"} targeting RPE ${action.targetRpe} (~${10 - action.targetRpe} reps in reserve).`
+              : activeExerciseOneRmKg === null
+                ? "I need an estimated 1RM for this lift first — log a heavier set or two and try again."
+                : "Couldn't find any weighted sets to scale reps on.",
+          );
           break;
         }
         case "scaleActiveBlockWeights": {
@@ -1772,17 +1825,13 @@ export default function Home() {
             anyHadOneRm = anyHadOneRm || result.hadOneRm;
           }
 
-          appendMessage({
-            id: makeId("msg"),
-            kind: "text",
-            role: "assistant",
-            text:
-              totalChanged > 0
-                ? `Picked weights for ${totalChanged} ${totalChanged === 1 ? "set" : "sets"} targeting RPE ${action.targetRpe} (~${10 - action.targetRpe} reps in reserve).`
-                : !anyHadOneRm
-                  ? "I need an estimated 1RM for this lift first — log a few weighted sets and try again."
-                  : "Couldn't find any sets missing weight to fill in.",
-          });
+          pushAssistantText(
+            totalChanged > 0
+              ? `Picked weights for ${totalChanged} ${totalChanged === 1 ? "set" : "sets"} targeting RPE ${action.targetRpe} (~${10 - action.targetRpe} reps in reserve).`
+              : !anyHadOneRm
+                ? "I need an estimated 1RM for this lift first — log a few weighted sets and try again."
+                : "Couldn't find any sets missing weight to fill in.",
+          );
           break;
         }
         case "showPicker": {
@@ -1793,6 +1842,7 @@ export default function Home() {
             options: action.options,
             pendingSets: action.pendingSets,
           });
+          assistantEmitted = true;
           break;
         }
         case "bufferSets": {
@@ -1803,12 +1853,7 @@ export default function Home() {
           break;
         }
         case "reply": {
-          appendMessage({
-            id: makeId("msg"),
-            kind: "text",
-            role: "assistant",
-            text: action.text,
-          });
+          pushAssistantText(action.text);
           break;
         }
         case "showExerciseHelp": {
@@ -1821,17 +1866,42 @@ export default function Home() {
               exercise,
               mode: action.mode,
             });
+            assistantEmitted = true;
           } else {
-            appendMessage({
-              id: makeId("msg"),
-              kind: "text",
-              role: "assistant",
-              text: "I couldn't find that exercise in the catalog.",
-            });
+            pushAssistantText("I couldn't find that exercise in the catalog.");
+          }
+          break;
+        }
+        case "trimActiveBlockToCount": {
+          const activeId = activeBlockIdRef.current;
+          if (activeId) {
+            const name =
+              blocksRef.current[activeId]?.exercise.name ?? "exercise";
+            const removed = trimBlockToSetCount(activeId, action.keepCount);
+            if (removed > 0) {
+              void scheduleTranscriptSave();
+              pushAssistantText(
+                `Trimmed to ${action.keepCount} ${action.keepCount === 1 ? "set" : "sets"} on ${name} (removed ${removed} ${removed === 1 ? "set" : "sets"}).`,
+              );
+            } else {
+              pushAssistantText(
+                `Already at ${action.keepCount} ${action.keepCount === 1 ? "set" : "sets"} on ${name}.`,
+              );
+            }
           }
           break;
         }
       }
+    }
+
+    const hadReplyAction = actions.some((a) => a.type === "reply");
+    if (suggestion.reply?.trim() && !hadReplyAction) {
+      pushAssistantText(suggestion.reply.trim());
+    }
+    if (!assistantEmitted) {
+      pushAssistantText(
+        "I couldn't apply that. Try naming an exercise, or a set like: bench 3×5 at 100kg.",
+      );
     }
   }
 

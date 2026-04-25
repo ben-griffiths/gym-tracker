@@ -19,6 +19,8 @@ import type {
 export type ChatFlowInput = {
   suggestion: ChatSetSuggestion;
   hasActiveBlock: boolean;
+  /** Count of sets on the current active block; used to trim to "just N sets". */
+  activeBlockSetCount?: number;
   /** Sets accumulated from previous turns that had no block/exercise yet. */
   bufferedSets: SetDetail[];
 };
@@ -66,12 +68,46 @@ export type ChatAction =
       type: "showExerciseHelp";
       exerciseSlug: string;
       mode: "instructions" | "description";
-    };
+    }
+  | { type: "trimActiveBlockToCount"; keepCount: number };
 
 const MAX_PICKER_OPTIONS = 5;
 
+/**
+ * If the user is correcting the *number* of sets (e.g. "actually it should
+ * be just 5 sets"), return the count they want. Must not fire for bare
+ * "5 reps" without a set-count phrase.
+ */
+export function tryParseSetCountTrimRequest(message: string): number | null {
+  const t = message.trim();
+  if (!/set|sets/i.test(t)) return null;
+  const mJust =
+    /\b(?:just|only|exactly)\s+(\d{1,2})\s*sets?\b/i.exec(t) ??
+    /\b(\d{1,2})\s*sets?\s*(?:only|total|in total|max)\b/i.exec(t);
+  if (mJust) {
+    const n = Number(mJust[1]);
+    if (Number.isInteger(n) && n >= 1 && n <= 100) return n;
+  }
+  const mShould = /\bshould\s+be\s+(\d{1,2})\s*sets?\b/i.exec(t);
+  if (mShould) {
+    const n = Number(mShould[1]);
+    if (Number.isInteger(n) && n >= 1 && n <= 100) return n;
+  }
+  const mWant = /\b(?:meant|want|need|have)\s+(\d{1,2})\s*sets?\b/i.exec(t);
+  if (mWant) {
+    const n = Number(mWant[1]);
+    if (Number.isInteger(n) && n >= 1 && n <= 100) return n;
+  }
+  return null;
+}
+
 export function planChatTurn(input: ChatFlowInput): ChatAction[] {
-  const { suggestion, hasActiveBlock, bufferedSets } = input;
+  const {
+    suggestion,
+    hasActiveBlock,
+    bufferedSets,
+    activeBlockSetCount = 0,
+  } = input;
   const hasSets = suggestion.sets.length > 0;
   const hasUpdates = suggestion.updates.length > 0;
   const hasBlockOps = suggestion.blockOperations.length > 0;
@@ -90,6 +126,18 @@ export function planChatTurn(input: ChatFlowInput): ChatAction[] {
       mode: suggestion.exerciseHelp.mode,
     });
     return actions;
+  }
+
+  // User is correcting set *count* ("just 5 sets" with 10 rows) — this must
+  // run before any LLM "update sets" (which would patch the first 5 and
+  // leave extras in place). Remove trailing sets, keep 1..N.
+  const trimTo = tryParseSetCountTrimRequest(suggestion.userMessage);
+  if (
+    trimTo !== null &&
+    hasActiveBlock &&
+    activeBlockSetCount > trimTo
+  ) {
+    return [{ type: "trimActiveBlockToCount", keepCount: trimTo }];
   }
 
   // "Scale the reps for me" — the agent should auto-fill rep counts on

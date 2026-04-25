@@ -72,7 +72,7 @@ export function Composer({
         type="submit"
         size="icon"
         disabled={formLocked || !text.trim()}
-        className="h-10 w-10 shrink-0 rounded-full"
+        className="h-10 w-10 shrink-0 rounded-full disabled:opacity-100"
         aria-label={showSendSpinner ? "Working" : "Send"}
         aria-busy={showSendSpinner}
       >

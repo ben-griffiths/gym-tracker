@@ -30,6 +30,43 @@ export function inferWeightUnit(input: string): "kg" | "lb" {
 }
 
 /**
+ * Parses "set 5 is 120kg, set 6 is 100kg" style lines into one SetUpdate
+ * per set. Used to override a single `update_sets` call that would wrongly
+ * apply one weight to every targetSetNumbers entry.
+ */
+export function parsePerSetFieldUpdates(
+  message: string,
+  context: ChatContext | undefined,
+): SetUpdate[] {
+  if (!context?.sets?.length) return [];
+  const maxSet = Math.max(...context.sets.map((s) => s.setNumber), 0);
+  const re =
+    /\bset\s*#?\s*(\d+)\s+(?:is|to|at|should\s+be)\s+(\d+(?:\.\d+)?)\s*(kg|kgs?|lb|lbs?|pounds?)?/gi;
+  const bySet = new Map<number, SetUpdate>();
+  for (const m of message.matchAll(re)) {
+    const n = Number(m[1]);
+    const w = Number(m[2]);
+    if (!Number.isInteger(n) || n < 1 || n > 100) continue;
+    if (!Number.isFinite(w)) continue;
+    if (n > maxSet) continue;
+    const unitToken = m[3]?.toLowerCase() ?? "";
+    const weightUnit: "kg" | "lb" = m[3]
+      ? unitToken.startsWith("lb") || unitToken.includes("pound")
+        ? "lb"
+        : "kg"
+      : inferWeightUnit(message);
+    bySet.set(n, {
+      targetSetNumbers: [n],
+      weight: w,
+      weightUnit,
+    });
+  }
+  return Array.from(bySet.values()).sort(
+    (a, b) => a.targetSetNumbers[0]! - b.targetSetNumbers[0]!,
+  );
+}
+
+/**
  * Parse an optional effort rating out of a message.
  *
  * Supported phrasings:

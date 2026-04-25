@@ -24,6 +24,7 @@ import {
 import {
   mergeScaleSuggestions,
   parseFallbackSuggestion,
+  parsePerSetFieldUpdates,
   parseSets,
   type ScaleRepsHint,
   type ScaleWeightsHint,
@@ -189,7 +190,7 @@ export const CHAT_TOOLS = [
     type: "function" as const,
     name: "update_sets",
     description:
-      "Retroactively modify PAST sets already visible in context. Use for 'they were all 5 reps', 'set 2 was 100kg', 'all at rpe 9'. Emit ONE call per distinct value (one per set) when the user describes a per-set rule.",
+      "Retroactively modify PAST set rows. ONE weight/rep/rpe value applies to EVERY index in `targetSetNumbers` for this call. For different values on different set numbers, call this tool **multiple times** in the same turn (one call per set), each with a single-element `targetSetNumbers` [n]. For '5 sets' COUNT trim, do not use. To clear rpe/rir/feel, set to null; omit reps/weight unless changing them. Examples: (a) 'all rpe 9' → one call, targetSetNumbers [1,2,3,4] rpe 9. (b) 'set 5 is 120, set 6 is 100' → **four** `update_sets` calls (or the app will parse the phrase) each with [5]+weight, [6]+weight, etc.",
     parameters: {
       type: "object",
       properties: {
@@ -197,6 +198,8 @@ export const CHAT_TOOLS = [
           type: "array",
           items: { type: "integer", minimum: 1 },
           minItems: 1,
+          description:
+            "Set numbers in the current exercise. One shared apply if they all get the same new weight/rep/rpe; otherwise use one set number per call and multiple calls.",
         },
         reps: { type: ["integer", "null"], minimum: 1, maximum: 100 },
         weight: { type: ["number", "null"], minimum: 0, maximum: 2000 },
@@ -343,7 +346,9 @@ export function buildSystemPrompt(): string {
     "- Call `autofill_weights` alongside `log_sets` whenever the user asks you to pick the weight, OR when they describe a warmup ramp ('2 warmup + 3 working sets', 'two warmups building up to working weight'). Pass `warmupSets` explicitly when the user mentioned them (e.g. '2 warmup sets' ⇒ warmupSets: 2). Emit `log_sets` with weight: null for EVERY set in this case (warmups AND working sets) so the client can ramp the sequence.",
     "- Call `autofill_reps` ONLY when the user asks you to choose reps for already-weighted sets ('scale the reps', 'pick reps for me'). NEVER mix it with `log_sets` in the same turn.",
     "- Effort ratings (rpe/rir/feel) only when the user explicitly tagged a set; otherwise omit them.",
-    "- For retroactive edits ('they were all rpe 9', 'set 2 was 6 reps') call `update_sets`, one entry per distinct value.",
+    "- For retroactive edits with the SAME new value on many sets ('they were all rpe 9') one `update_sets` can use multiple `targetSetNumbers` with one rpe/weight/reps value.",
+    "- If the user gives **different** values per set number ('set 5 is 120kg, set 6 is 100kg' / 'set 2 was 5 reps, set 3 was 3 reps'), you MUST call `update_sets` **once per set** (each call has a single set number in `targetSetNumbers` and that set's new weight/reps) — do NOT use one `update_sets` with one weight and four set numbers; that overwrites all with the same value.",
+    "- For a single 'set N is …' phrase you can also use one `update_sets` with one targetSetNumbers entry.",
     "- For 'remove / delete / scrap X' call `remove_block`. For 'no I meant Y' or 'change X to Y' call `replace_block` against the active / named block.",
     "- Use `show_exercise_help` for 'how do I do <exercise>?' (instructions) or 'what is <exercise>?' (description).",
     "- Use `reply` ONLY when nothing else fits (questions, chit-chat, greetings). Keep it to 1-3 sentences.",
@@ -535,15 +540,17 @@ function normaliseAppendSets(
 }
 
 function mapUpdate(update: z.infer<typeof updateSetsArgs>): SetUpdate {
-  return {
-    targetSetNumbers: update.targetSetNumbers,
-    ...(update.reps !== undefined ? { reps: update.reps } : {}),
-    ...(update.weight !== undefined ? { weight: update.weight } : {}),
-    ...(update.weightUnit !== undefined ? { weightUnit: update.weightUnit } : {}),
-    ...(update.rpe !== undefined ? { rpe: update.rpe } : {}),
-    ...(update.rir !== undefined ? { rir: update.rir } : {}),
-    ...(update.feel !== undefined ? { feel: update.feel as EffortFeel | null } : {}),
-  };
+  const out: SetUpdate = { targetSetNumbers: update.targetSetNumbers };
+  // Models often pass reps/weight: null to mean "unchanged" alongside rpe: null
+  // to clear effort — that must NOT wipe the logged reps/weight on the set.
+  if (update.reps != null) out.reps = update.reps;
+  if (update.weight != null) out.weight = update.weight;
+  if (update.weightUnit !== undefined) out.weightUnit = update.weightUnit;
+  if (update.rpe !== undefined) out.rpe = update.rpe;
+  if (update.rir !== undefined) out.rir = update.rir;
+  if (update.feel !== undefined)
+    out.feel = update.feel as EffortFeel | null;
+  return out;
 }
 
 export function assembleSuggestion(input: AssembleInput): ChatSetSuggestion {
@@ -576,7 +583,17 @@ export function assembleSuggestion(input: AssembleInput): ChatSetSuggestion {
     .map((entry) => ({ exercise: entry.exercise, sets: entry.sets }));
 
   // --- Updates -------------------------------------------------------
-  const updates: SetUpdate[] = parsed.updateSets.map(mapUpdate);
+  let updates: SetUpdate[] = parsed.updateSets.map(mapUpdate);
+  if (context) {
+    const perSet = parsePerSetFieldUpdates(message, context);
+    if (
+      perSet.length > 0 &&
+      (perSet.length > updates.length ||
+        (updates.length <= 1 && perSet.length > 1))
+    ) {
+      updates = perSet;
+    }
+  }
 
   // --- Block operations ---------------------------------------------
   const blockOperations: BlockOperation[] = [];
@@ -807,4 +824,4 @@ export function extractToolCalls(completion: unknown): ToolCall[] {
 }
 
 // Re-exports so the route / tests don't have to reach into workout-parser.
-export { parseFallbackSuggestion, parseSets };
+export { parseFallbackSuggestion, parsePerSetFieldUpdates, parseSets };
