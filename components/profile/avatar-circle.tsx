@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { ThemeModeRadioGroup } from "@/components/layout/theme-toggle";
 import { cn } from "@/lib/utils";
 
 function initialFromEmail(email: string | null | undefined) {
@@ -118,6 +119,7 @@ export function AvatarCircle({ className }: AvatarCircleProps) {
           <p className="truncate text-sm font-medium text-foreground">
             {email ?? "No email"}
           </p>
+          <ThemeModeRadioGroup className="mt-3" />
           <button
             type="button"
             onClick={handleSignOut}

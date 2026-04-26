@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AvatarCircle } from "@/components/profile/avatar-circle";
 import { useAppHeaderCenter } from "@/components/layout/app-header-center-context";
-import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { formatWorkoutTitle } from "@/lib/workout-history";
 
 const PAGE_HEADER_TITLES: Record<string, string> = {
@@ -19,11 +18,12 @@ export function AppHeader() {
   const isHome = pathname === "/";
   const pageTitle = PAGE_HEADER_TITLES[pathname];
   const { customTitle } = useAppHeaderCenter();
-  const [nowLabel, setNowLabel] = useState(() =>
-    formatWorkoutTitle(new Date().toISOString()),
-  );
+  /** Empty until mount so SSR and first client pass match; time uses local TZ only after hydration. */
+  const [nowLabel, setNowLabel] = useState("\u00a0");
   useEffect(() => {
-    if (pageTitle || customTitle) return;
+    if (pageTitle || customTitle) {
+      return;
+    }
     const update = () =>
       setNowLabel(formatWorkoutTitle(new Date().toISOString()));
     update();
@@ -51,8 +51,7 @@ export function AppHeader() {
                 Mobile-first lifting journal
               </p>
             </div>
-            <div className="flex shrink-0 items-center gap-0.5">
-              <ThemeToggle />
+            <div className="flex shrink-0 items-center">
               <AvatarCircle className="!h-11 !w-11 text-sm" />
             </div>
           </div>
@@ -82,8 +81,7 @@ export function AppHeader() {
                 {nowLabel}
               </p>
             )}
-            <div className="flex min-w-0 items-center justify-end gap-0.5">
-              <ThemeToggle />
+            <div className="flex min-w-0 items-center justify-end">
               <AvatarCircle className="!h-11 !w-11 text-sm" />
             </div>
           </div>

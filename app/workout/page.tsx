@@ -16,7 +16,16 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Pencil, Undo2 } from "lucide-react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAppHeaderCenter } from "@/components/layout/app-header-center-context";
 import { useAppScrollRootRef } from "@/components/layout/app-scroll-area";
 import { CameraPopup } from "@/components/camera/camera-popup";
@@ -80,6 +89,13 @@ import {
   serializeWorkoutChatTranscript,
   type WorkoutChatMessage,
 } from "@/lib/workout-chat-transcript";
+import {
+  cloneWorkoutStateSnapshot,
+  planDatabaseReconciliation,
+  pruneUserMessageSnapshotMap,
+  type SnapshotExerciseBlock,
+  type WorkoutStateSnapshot,
+} from "@/lib/workout-snapshot";
 import type {
   BlockOperation,
   ChatContext,
@@ -238,6 +254,15 @@ export default function Home() {
   // Sets the user typed before any exercise was named. Drained on the next
   // turn that creates/activates a block (see lib/chat-flow.ts).
   const bufferedSetsRef = useRef<SetDetail[]>([]);
+  /** State immediately before each user line (text or camera) was appended. */
+  const snapshotBeforeUserMessageRef = useRef<
+    Map<string, WorkoutStateSnapshot>
+  >(new Map());
+  const [revertBusy, setRevertBusy] = useState(false);
+  const [editingUserMessage, setEditingUserMessage] = useState<{
+    id: string;
+    text: string;
+  } | null>(null);
 
   const scrollRootRef = useAppScrollRootRef();
 
@@ -310,6 +335,81 @@ export default function Home() {
   function commitCollapsed(next: Set<string>) {
     collapsedBlockIdsRef.current = next;
     setCollapsedBlockIds(next);
+  }
+
+  function captureWorkoutStateSnapshot(): WorkoutStateSnapshot {
+    return cloneWorkoutStateSnapshot({
+      messages: messagesRef.current,
+      blocks: blocksRef.current as Record<string, SnapshotExerciseBlock>,
+      activeBlockId: activeBlockIdRef.current,
+      collapsedBlockIds: [...collapsedBlockIdsRef.current],
+      bufferedSets: [...bufferedSetsRef.current],
+    });
+  }
+
+  function registerSnapshotBeforeUserMessage(userMessageId: string) {
+    snapshotBeforeUserMessageRef.current.set(
+      userMessageId,
+      captureWorkoutStateSnapshot(),
+    );
+  }
+
+  async function applyWorkoutStateSnapshot(target: WorkoutStateSnapshot) {
+    const fromBlocks = blocksRef.current as Record<string, SnapshotExerciseBlock>;
+    const merged = cloneWorkoutStateSnapshot(target);
+    if (storageModeRef.current === "database" && sessionIdRef.current) {
+      const plan = planDatabaseReconciliation(fromBlocks, merged.blocks);
+      try {
+        for (const id of plan.deleteDbIds) {
+          await deleteSet(id);
+        }
+        for (const u of plan.updates) {
+          await updateSet(u.dbId, u.patch);
+        }
+        for (const c of plan.creates) {
+          const response = await createSet({
+            sessionId: sessionIdRef.current!,
+            exercise: c.exerciseName,
+            reps: c.set.reps,
+            weight: c.set.weight,
+            weightUnit: c.set.weightUnit,
+            setNumber: c.set.setNumber,
+            source: c.set.source,
+            rpe: c.set.rpe ?? null,
+            rir: c.set.rir ?? null,
+            feel: c.set.feel ?? null,
+          });
+          const dbId: string | undefined = response?.created?.id;
+          const b = merged.blocks[c.blockId];
+          if (b && dbId) {
+            merged.blocks[c.blockId] = {
+              ...b,
+              sets: b.sets.map((s) =>
+                s.id === c.setLocalId ? { ...s, dbId } : s,
+              ),
+            };
+          }
+        }
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Could not sync database.";
+        toast.error(message);
+        throw e;
+      }
+    }
+    runWithoutTranscriptSave(() => {
+      commitMessages(merged.messages);
+      commitBlocks(merged.blocks as Record<string, ExerciseBlock>);
+      commitActiveBlockId(merged.activeBlockId);
+      commitCollapsed(new Set(merged.collapsedBlockIds));
+      bufferedSetsRef.current = [...merged.bufferedSets];
+    });
+    pruneUserMessageSnapshotMap(
+      snapshotBeforeUserMessageRef.current,
+      merged.messages.map((m) => m.id),
+    );
+    void flushTranscriptSave();
+    queryClient.invalidateQueries({ queryKey: ["workouts"] });
   }
 
   function collapseOthers(keepExpandedId: string | null) {
@@ -1655,8 +1755,10 @@ export default function Home() {
   async function handleChatSubmit(message: string) {
     await ensureSessionId();
 
+    const userMessageId = makeId("msg");
+    registerSnapshotBeforeUserMessage(userMessageId);
     appendMessage({
-      id: makeId("msg"),
+      id: userMessageId,
       kind: "text",
       role: "user",
       text: message,
@@ -1905,6 +2007,48 @@ export default function Home() {
     }
   }
 
+  async function undoUserMessage(userMessageId: string) {
+    const snap = snapshotBeforeUserMessageRef.current.get(userMessageId);
+    if (!snap) {
+      toast.error("This message can’t be undone (no saved history for it).");
+      return;
+    }
+    setRevertBusy(true);
+    try {
+      await applyWorkoutStateSnapshot(snap);
+    } catch {
+      // `applyWorkoutStateSnapshot` already toasts
+    } finally {
+      setRevertBusy(false);
+    }
+  }
+
+  async function editUserTextMessage(
+    userMessageId: string,
+    newText: string,
+  ) {
+    const snap = snapshotBeforeUserMessageRef.current.get(userMessageId);
+    if (!snap) {
+      toast.error("This message can’t be edited from here.");
+      return;
+    }
+    const trimmed = newText.trim();
+    if (!trimmed) return;
+    setRevertBusy(true);
+    try {
+      await applyWorkoutStateSnapshot(snap);
+      await handleChatSubmit(trimmed);
+    } catch {
+      // apply may have toasted
+    } finally {
+      setRevertBusy(false);
+    }
+  }
+
+  function userMessageCanUndoOrEdit(userMessageId: string): boolean {
+    return snapshotBeforeUserMessageRef.current.has(userMessageId);
+  }
+
   async function handleSelectExerciseOption(
     messageId: string,
     exercise: ExerciseRecord,
@@ -1945,8 +2089,10 @@ export default function Home() {
     await ensureSessionId();
 
     const imageUrl = `data:${payload.mimeType};base64,${payload.imageBase64}`;
+    const userMessageId = makeId("msg");
+    registerSnapshotBeforeUserMessage(userMessageId);
     appendMessage({
-      id: makeId("msg"),
+      id: userMessageId,
       kind: "camera-image",
       role: "user",
       imageUrl,
@@ -2393,6 +2539,56 @@ export default function Home() {
           {messages.map((message, index) => {
             const isLastMessage = index === messages.length - 1;
             if (message.kind === "text") {
+              if (message.role === "user") {
+                const canUndo = userMessageCanUndoOrEdit(message.id);
+                return (
+                  <MessageBubble
+                    key={message.id}
+                    role="user"
+                    actions={
+                      canUndo ? (
+                        <>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-xs text-muted-foreground"
+                            disabled={revertBusy}
+                            onClick={() => void undoUserMessage(message.id)}
+                          >
+                            <Undo2
+                              className="mr-1 h-3.5 w-3.5"
+                              aria-hidden
+                            />
+                            Undo
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-xs text-muted-foreground"
+                            disabled={revertBusy}
+                            onClick={() =>
+                              setEditingUserMessage({
+                                id: message.id,
+                                text: message.text,
+                              })
+                            }
+                          >
+                            <Pencil
+                              className="mr-1 h-3.5 w-3.5"
+                              aria-hidden
+                            />
+                            Edit
+                          </Button>
+                        </>
+                      ) : undefined
+                    }
+                  >
+                    {message.text}
+                  </MessageBubble>
+                );
+              }
               return (
                 <MessageBubble key={message.id} role={message.role}>
                   {message.text}
@@ -2514,8 +2710,30 @@ export default function Home() {
             }
 
             if (message.kind === "camera-image") {
+              const canUndo = userMessageCanUndoOrEdit(message.id);
               return (
-                <MessageBubble key={message.id} role="user">
+                <MessageBubble
+                  key={message.id}
+                  role="user"
+                  actions={
+                    canUndo ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-xs text-muted-foreground"
+                        disabled={revertBusy}
+                        onClick={() => void undoUserMessage(message.id)}
+                      >
+                        <Undo2
+                          className="mr-1 h-3.5 w-3.5"
+                          aria-hidden
+                        />
+                        Undo
+                      </Button>
+                    ) : undefined
+                  }
+                >
                   <img
                     src={message.imageUrl}
                     alt="Captured workout set"
@@ -2562,6 +2780,62 @@ export default function Home() {
           ) : null}
       </div>
 
+      <Dialog
+        open={editingUserMessage !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditingUserMessage(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit message</DialogTitle>
+          </DialogHeader>
+          {editingUserMessage ? (
+            <form
+              className="space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const t = (e.currentTarget.elements.namedItem("body") as
+                  | HTMLTextAreaElement
+                  | undefined)?.value;
+                if (t === undefined) return;
+                const id = editingUserMessage.id;
+                void (async () => {
+                  setEditingUserMessage(null);
+                  await editUserTextMessage(id, t);
+                })();
+              }}
+            >
+              <textarea
+                name="body"
+                className="min-h-[6rem] w-full rounded-lg border border-input bg-background px-3 py-2 text-[15px] outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                defaultValue={editingUserMessage.text}
+                autoFocus
+                disabled={revertBusy}
+              />
+              <DialogFooter
+                className="border-0 bg-transparent p-0 sm:justify-end"
+                showCloseButton={false}
+              >
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingUserMessage(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={revertBusy}
+                >
+                  Send edited message
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <footer
         className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-6"
       >
@@ -2569,8 +2843,8 @@ export default function Home() {
           <Composer
             onSubmit={handleChatSubmit}
             cameraTrigger={cameraTrigger}
-            disabled={false}
-            isLoading={cameraBusy}
+            disabled={revertBusy}
+            isLoading={cameraBusy || chatMutation.isPending || revertBusy}
           />
         </div>
       </footer>

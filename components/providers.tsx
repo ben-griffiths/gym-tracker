@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider } from "@teispace/next-themes";
 import { ReactNode, useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -18,6 +18,7 @@ export function Providers({ children }: ProvidersProps) {
         attribute="class"
         defaultTheme="system"
         enableSystem
+        storage="local"
         storageKey="liftlog-theme"
         disableTransitionOnChange
       >

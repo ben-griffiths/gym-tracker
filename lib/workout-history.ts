@@ -61,15 +61,19 @@ export function formatDate(iso?: string): string {
   }
 }
 
+/** Fixed locale + 24h so server (Node) and client (browser) match during SSR/hydration. */
+const WORKOUT_TITLE_LOCALE = "en-GB";
+
 export function formatWorkoutTitle(iso?: string, fallback = "Workout"): string {
   if (!iso) return fallback;
   try {
     const date = new Date(iso);
-    const time = new Intl.DateTimeFormat(undefined, {
+    const time = new Intl.DateTimeFormat(WORKOUT_TITLE_LOCALE, {
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
     }).format(date);
-    const day = new Intl.DateTimeFormat(undefined, {
+    const day = new Intl.DateTimeFormat(WORKOUT_TITLE_LOCALE, {
       day: "numeric",
       month: "short",
       year: "numeric",
