@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true">
+  <style>
+    .ring {
+      fill: none;
+      stroke: #252525;
+      stroke-width: 1.75;
+    }
+    .mark {
+      fill: #252525;
+    }
+    @media (prefers-color-scheme: dark) {
+      .ring {
+        stroke: #fafafa;
+      }
+      .mark {
+        fill: #fafafa;
+      }
+    }
+  </style>
+  <!-- Matches legacy app/icon.png: ring + centered disk with horizontal tabs -->
+  <circle class="ring" cx="16" cy="16" r="13.25" />
+  <circle class="mark" cx="16" cy="16" r="5" />
+  <rect class="mark" x="5" y="13" width="8" height="6" rx="3" />
+  <rect class="mark" x="19" y="13" width="8" height="6" rx="3" />
+</svg>
