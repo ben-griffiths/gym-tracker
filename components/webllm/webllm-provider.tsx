@@ -31,6 +31,7 @@ import {
   webllmLogError,
   webllmLogProgress,
   webllmLogResetProgressThrottle,
+  webllmNotifyInspectorBoot,
 } from "@/lib/webllm-client-log";
 import {
   webllmDiagBeginLoad,
@@ -100,6 +101,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
 
   // SessionStorage + UA are client-only: apply once after mount so server HTML matches first paint, then we correct.
   useLayoutEffect(() => {
+    webllmNotifyInspectorBoot();
     // Before consumeLoadCrashIfAny: upload buffered progress if last session died mid–CreateMLCEngine
     webllmDiagUploadIfInflightOnBoot();
     deferAutoload.current = prefersLowResourceWebLLM();

@@ -1,35 +1,56 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { isWebllmClientLogEnabled, webllmLog } from "@/lib/webllm-client-log";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { isWebllmClientLogEnabled, webllmLog, webllmNotifyInspectorBoot } from "@/lib/webllm-client-log";
 
 describe("webllm-client-log", () => {
-  const prev = process.env.NODE_ENV;
-  const prevPublic = process.env.NEXT_PUBLIC_WEBLLM_LOG;
-
   beforeEach(() => {
-    vi.stubGlobal("localStorage", {
-      getItem: vi.fn(() => null),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-    });
+    vi.unstubAllGlobals();
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
-    (process as { env: NodeJS.ProcessEnv }).env.NODE_ENV = prev;
-    if (prevPublic === undefined) delete process.env.NEXT_PUBLIC_WEBLLM_LOG;
-    else process.env.NEXT_PUBLIC_WEBLLM_LOG = prevPublic;
+    vi.unstubAllEnvs();
   });
 
-  it("is enabled in development", () => {
-    (process as { env: NodeJS.ProcessEnv }).env.NODE_ENV = "development";
+  it("is enabled in development (no window)", () => {
+    vi.stubEnv("NODE_ENV", "development");
     expect(isWebllmClientLogEnabled()).toBe(true);
   });
 
-  it("webllmLog with force still logs when not verbose", () => {
-    (process as { env: NodeJS.ProcessEnv }).env.NODE_ENV = "production";
+  it("defaults to enabled in production when localStorage is unset (browser)", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_WEBLLM_LOG", "");
+    vi.stubGlobal("window", { localStorage: { getItem: () => null } });
+    expect(isWebllmClientLogEnabled()).toBe(true);
+  });
+
+  it("is off when localStorage is 0", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_WEBLLM_LOG", "");
+    vi.stubGlobal("window", { localStorage: { getItem: () => "0" } });
+    expect(isWebllmClientLogEnabled()).toBe(false);
+  });
+
+  it("is off when NEXT_PUBLIC_WEBLLM_LOG is 0", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_WEBLLM_LOG", "0");
+    vi.stubGlobal("window", { localStorage: { getItem: () => null } });
+    expect(isWebllmClientLogEnabled()).toBe(false);
+  });
+
+  it("webllmLog with force still logs when verbose is off", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_WEBLLM_LOG", "0");
+    vi.stubGlobal("window", { localStorage: { getItem: () => "0" } });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     webllmLog("test event", { a: 1 }, { force: true });
     expect(log).toHaveBeenCalled();
     log.mockRestore();
+  });
+
+  it("webllmNotifyInspectorBoot uses console.warn", () => {
+    vi.stubGlobal("window", {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    webllmNotifyInspectorBoot();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
