@@ -17,7 +17,6 @@ import {
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Pencil, Undo2 } from "lucide-react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -44,12 +43,12 @@ import {
   ExerciseBlockCard,
   type BlockSet,
 } from "@/components/workout/exercise-block-card";
+import { WebllmProvider, useWebllm } from "@/components/webllm/webllm-provider";
 import {
   createManySets,
   createSet,
   createWorkoutSession,
   deleteSet,
-  getChatSuggestion,
   patchWorkoutTranscript,
   recognizeVision,
   registerSessionExercise,
@@ -209,7 +208,8 @@ function ExerciseBlockStickyFrame({
   );
 }
 
-export default function Home() {
+function WorkoutPageContent() {
+  const webllm = useWebllm();
   const queryClient = useQueryClient();
   // `?edit=<id>` switches the chat into "resume this session" mode. We can't
   // read it via a `useState` initializer because in a "use client" page that
@@ -497,8 +497,19 @@ export default function Home() {
   }
 
   const chatMutation = useMutation({
-    mutationFn: (input: { message: string; context?: ChatContext }) =>
-      getChatSuggestion(input.message, input.context),
+    mutationFn: async (input: { message: string; context?: ChatContext }) => {
+      const engine = webllm.getEngine();
+      if (!engine) {
+        const { parseFallbackSuggestion } = await import("@/lib/workout-parser");
+        return parseFallbackSuggestion(input.message, input.context);
+      }
+      const { runChatAgentWebLLM } = await import("@/lib/workout-chat-webllm");
+      const { suggestion } = await runChatAgentWebLLM(engine, {
+        message: input.message,
+        context: input.context,
+      });
+      return suggestion;
+    },
   });
 
   // Pull the user's past sessions so we can offer "start from last workout"
@@ -2840,14 +2851,58 @@ export default function Home() {
         className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-6"
       >
         <div className="pointer-events-auto mx-auto flex w-full min-w-0 max-w-full flex-col gap-1.5 px-1">
+          {webllm.status === "loading" && webllm.progress ? (
+            <p className="rounded-lg border border-border bg-muted/60 px-2 py-1.5 text-center text-xs text-muted-foreground">
+              Loading local AI:{" "}
+              {Math.round((webllm.progress.progress || 0) * 100)}% —{" "}
+              {webllm.progress.text}
+            </p>
+          ) : null}
+          {webllm.status === "unsupported" ? (
+            <p className="rounded-lg border border-border bg-muted/60 px-2 py-1.5 text-center text-xs text-muted-foreground">
+              Workout chat needs{" "}
+              <a
+                className="underline"
+                href="https://caniuse.com/webgpu"
+                target="_blank"
+                rel="noreferrer"
+              >
+                WebGPU
+              </a>{" "}
+              (e.g. Chrome or Edge on desktop). Text still applies via local
+              parsing.
+            </p>
+          ) : null}
+          {webllm.status === "error" && webllm.errorMessage ? (
+            <p className="flex flex-col gap-1 rounded-lg border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-center text-xs text-destructive sm:flex-row sm:items-center sm:justify-center sm:gap-2">
+              <span>Model failed: {webllm.errorMessage}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 self-center text-xs"
+                onClick={webllm.retry}
+              >
+                Retry
+              </Button>
+            </p>
+          ) : null}
           <Composer
             onSubmit={handleChatSubmit}
             cameraTrigger={cameraTrigger}
-            disabled={revertBusy}
+            disabled={revertBusy || webllm.chatSendBlocked}
             isLoading={cameraBusy || chatMutation.isPending || revertBusy}
           />
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <WebllmProvider>
+      <WorkoutPageContent />
+    </WebllmProvider>
   );
 }

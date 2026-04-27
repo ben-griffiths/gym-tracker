@@ -1,9 +1,4 @@
-import type {
-  ChatContext,
-  ChatSetSuggestion,
-  EffortFeel,
-  VisionRecognitionResponse,
-} from "@/lib/types/workout";
+import type { EffortFeel, VisionRecognitionResponse } from "@/lib/types/workout";
 
 async function throwIfNotOk(response: Response, fallbackMessage: string) {
   if (response.ok) return;
@@ -44,22 +39,6 @@ export async function recognizeVision(imageBase64: string, mimeType: string) {
   await throwIfNotOk(response, "Camera recognition failed");
 
   return response.json() as Promise<VisionRecognitionResponse>;
-}
-
-export async function getChatSuggestion(
-  message: string,
-  context?: ChatContext,
-) {
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, context }),
-  });
-
-  await throwIfNotOk(response, "Chat request failed");
-
-  const body = (await response.json()) as { suggestion: ChatSetSuggestion };
-  return body.suggestion;
 }
 
 export async function updateSet(

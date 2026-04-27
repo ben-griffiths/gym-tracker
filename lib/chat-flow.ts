@@ -315,7 +315,7 @@ export function planChatTurn(input: ChatFlowInput): ChatAction[] {
       text:
         aiReply && aiReply.length > 0
           ? aiReply
-          : "I could not match any exercise or parse any sets. Try something like `bench press` or `5 reps 100kg`.",
+          : "Name a lift and your sets, or use the camera when you're at your equipment.",
     });
   }
 

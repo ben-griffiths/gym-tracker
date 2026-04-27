@@ -14,8 +14,7 @@
  *    bogus-slug filtering) happens in one place.
  */
 
-import { z, ZodError } from "zod";
-import { getOpenAIClient, OPENAI_CHAT_MODEL } from "@/lib/ai";
+import { z } from "zod";
 import {
   EXERCISES,
   getExerciseBySlug,
@@ -142,6 +141,30 @@ export type ToolName = keyof typeof TOOL_HANDLERS;
 // OpenAI Responses API tool definitions. Each tool is small + strictly
 // typed so the model cannot forget a field that belongs to *another*
 // tool: each schema is its own unit.
+/** OpenAI / WebLLM Chat Completions `tools` entry shape. */
+export type ChatCompletionsToolEntry = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+};
+
+/**
+ * Map Responses-style `CHAT_TOOLS` to Chat Completions `tools` (used by WebLLM).
+ */
+export function getChatCompletionsTools(): ChatCompletionsToolEntry[] {
+  return CHAT_TOOLS.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
+  }));
+}
+
 export const CHAT_TOOLS = [
   {
     type: "function" as const,
@@ -310,7 +333,7 @@ export const CHAT_TOOLS = [
     type: "function" as const,
     name: "reply",
     description:
-      "Send a short conversational reply. Use ONLY when no other tool fits: general questions, chit-chat, thank-yous, greetings, generic coaching like 'how much rest between sets'. Keep it to 1-3 sentences, plain text, no markdown.",
+      "Send a short conversational reply. REQUIRED for stand-alone greetings and thanks: hi, hello, hey, good morning, thanks, etc. (call `reply` only — do not use log_sets). Also for general questions, chit-chat, and generic coaching (e.g. 'how much rest between sets') when no workout tool applies. 1-3 sentences, plain text, no markdown.",
     parameters: {
       type: "object",
       properties: { text: { type: "string", minLength: 1, maxLength: 600 } },
@@ -331,7 +354,9 @@ export function buildSystemPrompt(): string {
   );
   return [
     "You are Lift, an AI coach inside a mobile-first chat gym tracker.",
-    "Parse each user message into tool calls — do NOT write free-form JSON. Call whichever tools fit, in the right order. One call per distinct action.",
+    "For every message, decide first: is it (A) about logging or editing work in the gym, or naming/help with an exercise, or (B) only chit‑chat (greeting, thanks, small talk) with no lift, weight, or rep to log?",
+    "For (A): respond with tool calls only — do NOT return raw JSON. Call whichever tools fit, in the right order, one call per distinct action.",
+    "For (B): you MUST call the `reply` tool with a short friendly line — do NOT call `log_sets`, `update_sets`, or other workout tools. That still counts as using tools correctly.",
     "",
     "Rules:",
     "- Every exercise you reference must come from the catalog below. If the user's word doesn't match a catalog slug, resolve it via the most common abbreviation (bench⇒bench-press, OHP/overhead press⇒shoulder-press, dead/deads⇒deadlift, squat⇒squat).",
@@ -351,7 +376,7 @@ export function buildSystemPrompt(): string {
     "- For a single 'set N is …' phrase you can also use one `update_sets` with one targetSetNumbers entry.",
     "- For 'remove / delete / scrap X' call `remove_block`. For 'no I meant Y' or 'change X to Y' call `replace_block` against the active / named block.",
     "- Use `show_exercise_help` for 'how do I do <exercise>?' (instructions) or 'what is <exercise>?' (description).",
-    "- Use `reply` ONLY when nothing else fits (questions, chit-chat, greetings). Keep it to 1-3 sentences.",
+    "- Greetings, thanks, and short chit‑chat with no workout data ⇒ `reply` only (see intro). For questions, chit-chat, or help when no other tool fits, use `reply`. Keep it to 1-3 sentences.",
     "- You MAY call multiple tools in one turn (e.g. `log_sets` + `autofill_weights`, or several `log_sets` for a multi-exercise turn).",
     "",
     "Catalog (slug:name):",
@@ -525,6 +550,25 @@ function defaultRepsForMultiExerciseWeightOnlyRows(
   }));
 }
 
+/**
+ * If the model picked bench-dips but the user only said "bench" (no "dip(s)"),
+ * map to bench-press. Keeps colloquial "bench" aligned with the system prompt.
+ */
+function coerceLogSetsExerciseSlug(
+  userMessage: string,
+  modelSlug: string,
+): string {
+  const t = userMessage.toLowerCase();
+  if (
+    modelSlug === "bench-dips" &&
+    /\bbench\b/.test(t) &&
+    !/\bdips?\b/.test(t)
+  ) {
+    return "bench-press";
+  }
+  return modelSlug;
+}
+
 function normaliseAppendSets(
   raw: z.infer<typeof setSchema>[],
 ): SetDetail[] {
@@ -566,7 +610,8 @@ export function assembleSuggestion(input: AssembleInput): ChatSetSuggestion {
   };
   const resolvedLogs: ResolvedLogCall[] = [];
   for (const call of parsed.logSets) {
-    const exercise = getExerciseBySlug(call.exerciseSlug);
+    const slug = coerceLogSetsExerciseSlug(message, call.exerciseSlug);
+    const exercise = getExerciseBySlug(slug);
     if (!exercise) continue;
     resolvedLogs.push({
       exercise,
@@ -730,69 +775,6 @@ export function assembleSuggestion(input: AssembleInput): ChatSetSuggestion {
   };
 }
 
-// --------------------------------------------------------------------
-// Top-level entry point used by the /api/chat route.
-// --------------------------------------------------------------------
-
-export async function runChatAgent(input: {
-  message: string;
-  context: ChatContext | undefined;
-}): Promise<{
-  suggestion: ChatSetSuggestion;
-  source: "openai" | "fallback";
-  detail?: unknown;
-}> {
-  const { message, context } = input;
-  const fallback = parseFallbackSuggestion(message, context);
-  const openai = getOpenAIClient();
-  if (!openai) {
-    return { suggestion: fallback, source: "fallback" };
-  }
-
-  try {
-    const completion = await openai.responses.create({
-      model: OPENAI_CHAT_MODEL,
-      input: [
-        { role: "system", content: buildSystemPrompt() },
-        { role: "system", content: `Chat context:\n${summariseContext(context)}` },
-        { role: "user", content: message },
-      ],
-      // Cast to the Responses API Tool[] — our schemas are authored for
-      // non-strict mode (optional fields), which the SDK types don't
-      // expose directly.
-      tools: CHAT_TOOLS as unknown as Parameters<
-        typeof openai.responses.create
-      >[0]["tools"],
-      tool_choice: "auto",
-    });
-
-    const toolCalls = extractToolCalls(completion);
-    // No tool calls and no text? Fall back so the user sees something.
-    if (toolCalls.length === 0) {
-      const freeform = completion.output_text?.trim();
-      if (freeform) {
-        return {
-          suggestion: { ...fallback, reply: freeform },
-          source: "openai",
-        };
-      }
-      return { suggestion: fallback, source: "fallback" };
-    }
-
-    const suggestion = assembleSuggestion({
-      message,
-      context,
-      toolCalls,
-      fallback,
-    });
-    return { suggestion, source: "openai" };
-  } catch (error) {
-    const detail =
-      error instanceof ZodError ? error.flatten() : "LLM parse failed, fallback used";
-    return { suggestion: fallback, source: "fallback", detail };
-  }
-}
-
 /**
  * Extract tool calls from a Responses API completion.
  *
@@ -823,5 +805,37 @@ export function extractToolCalls(completion: unknown): ToolCall[] {
   return calls;
 }
 
-// Re-exports so the route / tests don't have to reach into workout-parser.
+/**
+ * Extract tool calls from an OpenAI-style Chat Completions response (used by WebLLM).
+ */
+export function extractToolCallsFromChatCompletion(
+  completion: unknown,
+): ToolCall[] {
+  if (!completion || typeof completion !== "object") return [];
+  const choices = (completion as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return [];
+  const first = choices[0] as { message?: unknown } | undefined;
+  const message = first?.message;
+  if (!message || typeof message !== "object") return [];
+  const toolCalls = (message as { tool_calls?: unknown }).tool_calls;
+  if (!Array.isArray(toolCalls)) return [];
+  const calls: ToolCall[] = [];
+  for (const call of toolCalls) {
+    if (!call || typeof call !== "object") continue;
+    const typed = call as {
+      type?: string;
+      function?: { name?: string; arguments?: string };
+    };
+    if (typed.type !== "function" && typed.type !== undefined) continue;
+    const name = typed.function?.name;
+    if (typeof name !== "string") continue;
+    const args = typed.function?.arguments;
+    const argsString =
+      typeof args === "string" ? args : JSON.stringify(args ?? {});
+    calls.push({ name, arguments: argsString });
+  }
+  return calls;
+}
+
+// Re-exports so tests don't have to reach into workout-parser.
 export { parseFallbackSuggestion, parsePerSetFieldUpdates, parseSets };

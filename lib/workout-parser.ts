@@ -568,6 +568,17 @@ function computeFallbackAutoResolved(
     return firstOption;
   }
 
+  // "bench …" colloquially means bench press; search ranks bench-press first, but
+  // the user message may not include the full phrase "bench press".
+  if (
+    query === "bench" &&
+    firstOption?.slug === "bench-press" &&
+    /\bbench\b/.test(lower) &&
+    !/\bdips?\b/.test(lower)
+  ) {
+    return firstOption;
+  }
+
   return null;
 }
 
@@ -933,6 +944,36 @@ function detectBlockOperations(
   return [];
 }
 
+const PURE_GREETING_MAX_LEN = 56;
+
+/**
+ * Short stand-alone pleasantries with no digits and no workout intent.
+ * Used when the in-browser LLM is unavailable so the client still gets `reply`.
+ */
+export function isPureGreetingMessage(message: string): boolean {
+  const t = message.trim();
+  if (t.length === 0 || t.length > PURE_GREETING_MAX_LEN) return false;
+  if (/\d/.test(t)) return false;
+  if (
+    /\b(kg|lb|lbs?|reps?|sets?|x|×|bench|squat|dead|press|curl|row|pull|push|rdl|fly|dip|pullup|chin|leg|hack|smith|lat|hip|glute|cable|db|dumbbell|barbell)\b/i.test(
+      t,
+    )
+  ) {
+    return false;
+  }
+  const normalized = t
+    .replace(/[!?.…,]+$/g, "")
+    .trim()
+    .toLowerCase();
+  if (/^(hi|hello|hey|hiya|howdy|yo|sup|thanks|thx|cheers)$/.test(normalized)) {
+    return true;
+  }
+  if (/^(hi|hello|hey|hiya|howdy)\s+there$/.test(normalized)) return true;
+  if (/^good\s+(morning|afternoon|evening|day)$/.test(normalized)) return true;
+  if (/^thank you$/.test(normalized)) return true;
+  return false;
+}
+
 export function parseFallbackSuggestion(
   message: string,
   context?: ChatContext,
@@ -948,6 +989,24 @@ export function parseFallbackSuggestion(
       suggestedCommonReps: COMMON_REPS,
       suggestedCommonWeights: COMMON_WEIGHTS,
       userMessage: message,
+    };
+  }
+
+  if (isPureGreetingMessage(message)) {
+    return {
+      exerciseOptions: [],
+      autoResolvedExercise: null,
+      sets: [],
+      updates: [],
+      blockOperations: [],
+      resetActiveBlockSets: false,
+      scaleActiveBlockReps: null,
+      scaleActiveBlockWeights: null,
+      suggestedCommonReps: COMMON_REPS,
+      suggestedCommonWeights: COMMON_WEIGHTS,
+      userMessage: message,
+      reply:
+        "Hey! When you're ready, name a lift and your sets — or use the camera on your equipment.",
     };
   }
 

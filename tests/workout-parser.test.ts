@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatContext } from "../lib/types/workout";
 import {
   inferWeightUnit,
+  isPureGreetingMessage,
   mergeScaleSuggestions,
   parseEffort,
   parseFallbackSuggestion,
@@ -11,6 +12,18 @@ import {
 } from "../lib/workout-parser";
 
 describe("workout parser", () => {
+  it("treats stand-alone greetings as conversational reply for fallbacks", () => {
+    expect(isPureGreetingMessage("hello")).toBe(true);
+    expect(isPureGreetingMessage("Hi there!")).toBe(true);
+    expect(isPureGreetingMessage("good morning")).toBe(true);
+    expect(isPureGreetingMessage("bench 5x5")).toBe(false);
+    expect(isPureGreetingMessage("say hi to my friend")).toBe(false);
+
+    const suggestion = parseFallbackSuggestion("hello");
+    expect(suggestion.reply).toContain("Hey!");
+    expect(suggestion.sets).toHaveLength(0);
+  });
+
   it("parses per-set weight phrases into separate updates", () => {
     const ctx: ChatContext = {
       sets: Array.from({ length: 8 }, (_, i) => ({

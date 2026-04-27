@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { assembleSuggestion, extractToolCalls } from "../lib/chat-agent";
+import {
+  assembleSuggestion,
+  buildSystemPrompt,
+  extractToolCalls,
+  extractToolCallsFromChatCompletion,
+  getChatCompletionsTools,
+} from "../lib/chat-agent";
 import { parseFallbackSuggestion } from "../lib/workout-parser";
 
 const emptyFallback = parseFallbackSuggestion("");
+
+describe("buildSystemPrompt", () => {
+  it("instructs the model to classify chit-chat and use reply for greetings", () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain("chit");
+    expect(prompt).toContain("`reply`");
+    expect(prompt).toMatch(/greet|Greet|greetings/i);
+  });
+});
 
 describe("assembleSuggestion", () => {
   it("maps a single log_sets tool call into primary sets", () => {
@@ -336,5 +351,68 @@ describe("extractToolCalls", () => {
     expect(extractToolCalls({})).toEqual([]);
     expect(extractToolCalls(null)).toEqual([]);
     expect(extractToolCalls({ output: "nope" })).toEqual([]);
+  });
+});
+
+describe("getChatCompletionsTools", () => {
+  it("maps each tool to Chat Completions function shape", () => {
+    const tools = getChatCompletionsTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const t of tools) {
+      expect(t.type).toBe("function");
+      expect(typeof t.function.name).toBe("string");
+      expect(t.function.name.length).toBeGreaterThan(0);
+      expect(typeof t.function.description).toBe("string");
+      expect(t.function.parameters).toBeDefined();
+    }
+  });
+});
+
+describe("extractToolCallsFromChatCompletion", () => {
+  it("reads tool_calls from choices[0].message", () => {
+    const completion = {
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "0",
+                type: "function",
+                function: {
+                  name: "log_sets",
+                  arguments: '{"exerciseSlug":"bench-press","sets":[]}',
+                },
+              },
+              {
+                id: "1",
+                type: "function",
+                function: {
+                  name: "reply",
+                  arguments: JSON.stringify({ text: "hi" }),
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const calls = extractToolCallsFromChatCompletion(completion);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      name: "log_sets",
+      arguments: '{"exerciseSlug":"bench-press","sets":[]}',
+    });
+    expect(JSON.parse(calls[1]!.arguments)).toEqual({ text: "hi" });
+  });
+
+  it("returns [] when tool_calls missing", () => {
+    expect(extractToolCallsFromChatCompletion({})).toEqual([]);
+    expect(extractToolCallsFromChatCompletion(null)).toEqual([]);
+    expect(
+      extractToolCallsFromChatCompletion({ choices: [{ message: { content: "x" } }] }),
+    ).toEqual([]);
   });
 });

@@ -461,6 +461,34 @@ describe("planChatTurn", () => {
     });
   });
 
+  describe("conversational fallback", () => {
+    it("uses a neutral nudge when there is no reply and no workout signal", () => {
+      const actions = planChatTurn({
+        suggestion: makeSuggestion({
+          userMessage: "mystery text",
+        }),
+        hasActiveBlock: false,
+        bufferedSets: [],
+      });
+      const reply = actions.find((a): a is Extract<ChatAction, { type: "reply" }> => a.type === "reply");
+      expect(reply).toBeDefined();
+      expect(reply?.text).toContain("Name a lift");
+      expect(reply?.text).not.toContain("could not match");
+    });
+
+    it("uses the AI reply when present", () => {
+      const actions = planChatTurn({
+        suggestion: makeSuggestion({
+          userMessage: "hello",
+          reply: "Hi there!",
+        }),
+        hasActiveBlock: false,
+        bufferedSets: [],
+      });
+      expect(actions).toEqual<ChatAction[]>([{ type: "reply", text: "Hi there!" }]);
+    });
+  });
+
   describe("block operations", () => {
     it("applies block ops and returns early when no sets/updates follow", () => {
       const actions = planChatTurn({

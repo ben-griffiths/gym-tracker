@@ -72,14 +72,14 @@ LiftLog ships as an **installable PWA** ([Next.js PWA guide](https://nextjs.org/
 ## API Endpoints
 
 - `POST /api/vision/recognize` - two steps: a vision model describes the image and names plausible exercises in plain English, then a text model maps that output to catalog `slug`s. JSON includes `description`, `suggestedInNaturalLanguage`, and ranked `candidates` (see [`lib/types/workout.ts`](lib/types/workout.ts)).
-- `POST /api/chat` - natural language workout parsing and suggestion output
 - `GET /api/workouts` - list recent workout groups/sessions
 - `POST /api/workouts` - create workout group and active session
 - `POST /api/sets` - log one or multiple set entries
 
 ## Notes
 
-- If `OPENAI_API_KEY` is missing, chat and camera routes fall back to deterministic local parsing/candidates.
+- **Workout text chat** runs in the browser via [WebLLM](https://webllm.mlc.ai/) (`@mlc-ai/web-llm`) and WebGPU. Optional `NEXT_PUBLIC_WEBLLM_MODEL` overrides the default (`Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC`, one of WebLLM’s function-calling models). Without WebGPU, chat still uses **deterministic local parsing** (same fallback as when the model fails to parse a turn).
+- If `OPENAI_API_KEY` is missing, the **camera** route falls back to deterministic local candidates; the chat **LLM** does not use OpenAI.
 - Optional: `OPENAI_VISION_DESCRIBE_MODEL` (default `gpt-5.4`) and `OPENAI_VISION_MATCH_MODEL` (default `gpt-4.1-mini`) in [`lib/ai.ts`](lib/ai.ts) as `OPENAI_VISION_MODEL` / `OPENAI_VISION_MATCH_MODEL`.
 - The workout screen may auto-log a camera pick when the API reports a strong catalog match; otherwise the user picks from the list.
 - Workout/set/vision routes require a Supabase bearer token; the client auto-creates an anonymous session when needed.

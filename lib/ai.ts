@@ -19,4 +19,3 @@ export const OPENAI_VISION_MODEL =
 /** Text-only: map free-text exercise ideas to catalog slugs. */
 export const OPENAI_VISION_MATCH_MODEL =
   process.env.OPENAI_VISION_MATCH_MODEL ?? "gpt-4.1-mini";
-export const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL ?? "gpt-4.1-mini";

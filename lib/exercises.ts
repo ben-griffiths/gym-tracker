@@ -57,6 +57,11 @@ const BY_NAME = new Map(
   EXERCISES.map((entry) => [entry.name.toLowerCase(), entry]),
 );
 
+/** When the user query is a single colloquial token, prefer this catalog slug. */
+const SHORT_QUERY_PREFERRED_SLUG: Record<string, string> = {
+  bench: "bench-press",
+};
+
 export function getExerciseBySlug(slug: string): ExerciseRecord | null {
   return BY_SLUG.get(slug) ?? null;
 }
@@ -165,6 +170,28 @@ export function searchExercises(
     if (top.some((candidate) => candidate.slug === entry.slug)) continue;
     top.push(entry);
     if (top.length >= limit) break;
+  }
+
+  // Colloquial one-word queries: "bench" should mean bench press, not e.g. bench dips.
+  const preferred = SHORT_QUERY_PREFERRED_SLUG[trimmed.toLowerCase()];
+  if (preferred) {
+    const preferredEntry = getExerciseBySlug(preferred);
+    if (preferredEntry) {
+      const at = top.findIndex((e) => e.slug === preferred);
+      if (at > 0) {
+        return [
+          preferredEntry,
+          ...top.filter((e) => e.slug !== preferred),
+        ].slice(0, limit);
+      }
+      // With a small `limit`, `top` may only contain a worse match — preferred was never added.
+      if (at === -1) {
+        return [
+          preferredEntry,
+          ...top.filter((e) => e.slug !== preferred),
+        ].slice(0, limit);
+      }
+    }
   }
 
   return top.slice(0, limit);
