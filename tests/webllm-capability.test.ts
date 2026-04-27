@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prefersLowResourceWebLLM } from "../lib/webllm-capability";
+import { WEBLLM_MODEL_ID, resolveWebLLMModelId } from "../lib/webllm-config";
 
 describe("prefersLowResourceWebLLM", () => {
   afterEach(() => {
@@ -31,27 +32,21 @@ describe("prefersLowResourceWebLLM", () => {
   });
 });
 
-describe("resolveWebLLMModelId (mobile default)", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetModules();
-  });
-
-  it("selects the Mistral 7B id on mobile and desktop id on wide Chrome", async () => {
-    vi.stubEnv("NEXT_PUBLIC_WEBLLM_MODEL", "");
-    vi.stubGlobal("navigator", {
-      userAgent: "iPhone; CPU iPhone OS 17_0",
-    });
-    vi.stubGlobal("window", { document: {} });
-    const m = await import("../lib/webllm-config");
-    expect(m.resolveWebLLMModelId()).toBe(m.DEFAULT_WEBLLM_MODEL_ID_MOBILE);
-
-    vi.resetModules();
+describe("resolveWebLLMModelId", () => {
+  it("always returns the hardcoded Mistral Hermes id", () => {
     vi.stubGlobal("navigator", {
       userAgent:
-        "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0 not mobile",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
     });
-    const d = await import("../lib/webllm-config");
-    expect(d.resolveWebLLMModelId()).toBe(d.DEFAULT_WEBLLM_MODEL_ID_DESKTOP);
+    vi.stubGlobal("window", {});
+    expect(resolveWebLLMModelId()).toBe(WEBLLM_MODEL_ID);
+
+    vi.unstubAllGlobals();
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0",
+    });
+    vi.stubGlobal("window", {});
+    expect(resolveWebLLMModelId()).toBe(WEBLLM_MODEL_ID);
   });
 });

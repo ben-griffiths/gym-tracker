@@ -1,40 +1,19 @@
 import type { ChatOptions } from "@mlc-ai/web-llm";
 import { prefersLowResourceWebLLM } from "@/lib/webllm-capability";
 
-/**
- * Default desktop: Hermes-2 Pro 8B (tool calling). ~5GB VRAM.
- * Default mobile: Hermes-2 Pro Mistral 7B q4f16 — still in `functionCallingModelIds`, lower VRAM.
- * Override with `NEXT_PUBLIC_WEBLLM_MODEL` (see README).
- */
-export const DEFAULT_WEBLLM_MODEL_ID_DESKTOP =
-  "Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC";
-export const DEFAULT_WEBLLM_MODEL_ID_MOBILE =
-  "Hermes-2-Pro-Mistral-7B-q4f16_1-MLC";
+/** Fixed WebLLM checkpoint (Hermes‑2 Mistral 7B). No env overrides — avoids drift between hosts */
+export const WEBLLM_MODEL_ID = "Hermes-2-Pro-Mistral-7B-q4f16_1-MLC";
 
-/** @deprecated use resolveWebLLMModelId in browser; kept for bundle string search */
-export const DEFAULT_WEBLLM_MODEL_ID = DEFAULT_WEBLLM_MODEL_ID_DESKTOP;
+/** @deprecated use WEBLLM_MODEL_ID / resolveWebLLMModelId */
+export const DEFAULT_WEBLLM_MODEL_ID_MOBILE = WEBLLM_MODEL_ID;
+/** @deprecated use WEBLLM_MODEL_ID */
+export const DEFAULT_WEBLLM_MODEL_ID_DESKTOP = WEBLLM_MODEL_ID;
+/** @deprecated use WEBLLM_MODEL_ID */
+export const DEFAULT_WEBLLM_MODEL_ID = WEBLLM_MODEL_ID;
 
-function envModelId(): string | null {
-  if (
-    typeof process !== "undefined" &&
-    process.env.NEXT_PUBLIC_WEBLLM_MODEL &&
-    process.env.NEXT_PUBLIC_WEBLLM_MODEL.trim() !== ""
-  ) {
-    return process.env.NEXT_PUBLIC_WEBLLM_MODEL.trim();
-  }
-  return null;
-}
-
-/**
- * Picks the model at runtime. Call only from the client (workout + provider).
- */
+/** Always returns {@link WEBLLM_MODEL_ID}. Invoke from browser codepaths only. */
 export function resolveWebLLMModelId(): string {
-  const fromEnv = envModelId();
-  if (fromEnv) return fromEnv;
-  if (typeof window === "undefined") return DEFAULT_WEBLLM_MODEL_ID_DESKTOP;
-  return prefersLowResourceWebLLM()
-    ? DEFAULT_WEBLLM_MODEL_ID_MOBILE
-    : DEFAULT_WEBLLM_MODEL_ID_DESKTOP;
+  return WEBLLM_MODEL_ID;
 }
 
 /**

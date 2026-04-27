@@ -78,7 +78,7 @@ LiftLog ships as an **installable PWA** ([Next.js PWA guide](https://nextjs.org/
 
 ## Notes
 
-- **Workout text chat** runs in the browser via [WebLLM](https://webllm.mlc.ai/) (`@mlc-ai/web-llm`) and WebGPU. Defaults: **desktop** `Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC`; **phone/tablet or Save-Data / ≤4GB RAM** `Hermes-2-Pro-Mistral-7B-q4f16_1-MLC` (lower VRAM; avoids many mobile GPU OOMs after the download/cache step). A smaller **context window** (2048) is applied on those devices. Set `NEXT_PUBLIC_WEBLLM_MODEL` to override. Without WebGPU, chat still uses **deterministic local parsing** (same fallback as when the model fails to parse a turn).
+- **Workout text chat** runs in the browser via [WebLLM](https://webllm.mlc.ai/) (`@mlc-ai/web-llm`) and WebGPU using a fixed **`Hermes-2-Pro-Mistral-7B-q4f16_1-MLC`** checkpoint from `lib/webllm-config.ts`. A smaller **context window** (2048) is applied on phone/tablet, Save-Data, or ≤4 GB RAM. Without WebGPU, chat still uses **deterministic local parsing** (same fallback as when the model fails to parse a turn).
 - If `OPENAI_API_KEY` is missing, the **camera** route falls back to deterministic local candidates; the chat **LLM** does not use OpenAI.
 - Optional: `OPENAI_VISION_DESCRIBE_MODEL` (default `gpt-5.4`) and `OPENAI_VISION_MATCH_MODEL` (default `gpt-4.1-mini`) in [`lib/ai.ts`](lib/ai.ts) as `OPENAI_VISION_MODEL` / `OPENAI_VISION_MATCH_MODEL`.
 - The workout screen may auto-log a camera pick when the API reports a strong catalog match; otherwise the user picks from the list.
