@@ -2858,6 +2858,23 @@ function WorkoutPageContent() {
               {webllm.progress.text}
             </p>
           ) : null}
+          {webllm.status === "awaiting_tap" ? (
+            <p className="flex flex-col gap-1 rounded-lg border border-border bg-muted/60 px-2 py-1.5 text-center text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-center sm:gap-2">
+              <span>
+                On-device AI is not started (avoids auto-reload issues on some
+                phones). Chat still uses local parsing, or
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-7 self-center text-xs"
+                onClick={webllm.startModelLoad}
+              >
+                Load on-device model
+              </Button>
+            </p>
+          ) : null}
           {webllm.status === "unsupported" ? (
             <p className="rounded-lg border border-border bg-muted/60 px-2 py-1.5 text-center text-xs text-muted-foreground">
               Workout chat needs{" "}

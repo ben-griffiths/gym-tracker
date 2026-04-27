@@ -33,6 +33,9 @@ export const metadata: Metadata = {
   description:
     "Mobile-first gym tracker with camera recognition, one-tap set logging, and chat assistance.",
   applicationName: "LiftLog",
+  icons: {
+    icon: [{ url: "/favicon-light.svg", type: "image/svg+xml" }],
+  },
   appleWebApp: {
     capable: true,
     title: "LiftLog",
