@@ -27,6 +27,12 @@ import {
   WEBLLM_LOAD_GATE_MESSAGE,
 } from "@/lib/webllm-load-session";
 import {
+  webllmLog,
+  webllmLogError,
+  webllmLogProgress,
+  webllmLogResetProgressThrottle,
+} from "@/lib/webllm-client-log";
+import {
   webllmDiagBeginLoad,
   webllmDiagOnLoadEnd,
   webllmDiagProgress,
@@ -98,14 +104,22 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     webllmDiagUploadIfInflightOnBoot();
     deferAutoload.current = prefersLowResourceWebLLM();
     const next = readInitialState();
+    webllmLog("mount: client gate", {
+      status: next.status,
+      deferAutoload: deferAutoload.current,
+      skipAutoload: isAutoloadSkipped(),
+    });
     setStatus(next.status);
     setErrorMessage(next.error);
     setClientReady(true);
   }, []);
 
   const runLoad = useCallback(async (gen: number) => {
+    webllmLog("runLoad: start", { gen, currentGen: loadGenRef.current });
+    webllmLogResetProgressThrottle();
     engineRef.current = null;
     if (!isWebGPUSupported()) {
+      webllmLog("runLoad: WebGPU not available", { gen }, { force: true });
       if (gen === loadGenRef.current) {
         setStatus("unsupported");
         setProgress(null);
@@ -119,9 +133,15 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     setErrorMessage(null);
 
     try {
+      webllmLog("runLoad: importing @mlc-ai/web-llm…");
       const webllm = await import("@mlc-ai/web-llm");
+      webllmLog("runLoad: web-llm module loaded");
       const modelId = resolveWebLLMModelId();
       const chatOpts = resolveWebLLMChatOptions();
+      webllmLog("runLoad: resolved model and chat opts", {
+        modelId,
+        hasContextOverride: chatOpts != null,
+      });
       const contextWindow =
         chatOpts && typeof (chatOpts as { context_window_size?: number }).context_window_size ===
         "number"
@@ -138,9 +158,14 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
           lowResource: lowRes,
           webgpu: isWebGPUSupported(),
         });
+      } else {
+        webllmLog("runLoad: no loadId (unexpected before CreateMLCEngine)", {}, { force: true });
       }
       let engine: MLCEngine;
       try {
+        webllmLog("runLoad: await CreateMLCEngine… (this can take several minutes on mobile)", {
+          modelId,
+        });
         engine = await webllm.CreateMLCEngine(
           modelId,
           {
@@ -157,6 +182,14 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
                 timeElapsed: report.timeElapsed,
                 text: report.text,
               });
+              webllmLogProgress(
+                {
+                  progress: report.progress,
+                  timeElapsed: report.timeElapsed,
+                  text: report.text,
+                },
+                gen,
+              );
               setProgress({
                 progress: report.progress,
                 timeElapsed: report.timeElapsed,
@@ -166,6 +199,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
           },
           chatOpts,
         );
+        webllmLog("runLoad: CreateMLCEngine Promise resolved (engine ready in JS)", { gen });
       } finally {
         // Tab crash leaves inflight set; a recoverable JS error clears it here.
         if (gen === loadGenRef.current) {
@@ -173,6 +207,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
         }
       }
       if (gen !== loadGenRef.current) {
+        webllmLog("runLoad: stale generation, unloading and aborting", { gen, current: loadGenRef.current });
         await engine.unload().catch(() => {});
         webllmDiagOnLoadEnd("aborted");
         return;
@@ -181,12 +216,14 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       engineRef.current = engine;
       setStatus("ready");
       setProgress(null);
+      webllmLog("runLoad: success, status=ready", { modelId, gen });
       webllmDiagOnLoadEnd("ready");
     } catch (err) {
       if (gen !== loadGenRef.current) return;
       clearInflightAfterEngineCreate();
       const message =
         err instanceof Error ? err.message : "Failed to load the local model.";
+      webllmLogError("runLoad: catch (load failed)", err, { gen });
       webllmDiagUploadJsError(message);
       setErrorMessage(message);
       setStatus("error");
@@ -199,15 +236,20 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     if (typeof window === "undefined" || !clientReady) return;
     if (deferAutoload.current) {
       // Phone / tablet: wait for startModelLoad() so one bad launch does not loop.
+      webllmLog("autoload: skipped (low-resource, awaiting tap to load)");
       return;
     }
     if (isAutoloadSkipped()) {
+      webllmLog("autoload: skipped (skip_autoload in session, user must retry)", {}, { force: true });
       return;
     }
     loadGenRef.current += 1;
     const gen = loadGenRef.current;
+    webllmLog("autoload: scheduling runLoad", { gen });
     void runLoad(gen);
     return () => {
+      // Verbose only: fires often in React 18 Strict Mode (double mount in dev).
+      webllmLog("autoload: cleanup, bump gen and unload", { fromGen: gen });
       loadGenRef.current += 1;
       const e = engineRef.current;
       engineRef.current = null;
@@ -217,6 +259,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
 
   const startModelLoad = useCallback(() => {
     if (status !== "awaiting_tap") return;
+    webllmLog("startModelLoad: user tapped (low-resource path)");
     allowAutoloadAgain();
     setErrorMessage(null);
     loadGenRef.current += 1;
@@ -225,6 +268,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
   }, [runLoad, status]);
 
   const retry = useCallback(() => {
+    webllmLog("retry: user requested reload");
     allowAutoloadAgain();
     setErrorMessage(null);
     loadGenRef.current += 1;

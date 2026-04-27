@@ -1,3 +1,5 @@
+import { webllmLog } from "@/lib/webllm-client-log";
+
 /**
  * Stops the Safari "this webpage was reloaded" death loop: if the tab crashes
  * during CreateMLCEngine, `gym.webllm.inflight` is never cleared. On the next
@@ -21,6 +23,11 @@ export function consumeLoadCrashIfAny(): string | null {
   if (typeof sessionStorage === "undefined") return null;
   const inflight = sessionStorage.getItem(KEY_INFLIGHT);
   if (inflight === "1") {
+    webllmLog(
+      "session: last page died during CreateMLCEngine (inflight) — gating autoload",
+      { inflight: "1" },
+      { force: true },
+    );
     sessionStorage.removeItem(KEY_INFLIGHT);
     sessionStorage.setItem(KEY_SKIP, "1");
     return CRASH_COPY;
@@ -38,6 +45,7 @@ export function allowAutoloadAgain(): void {
   sessionStorage.removeItem(KEY_SKIP);
   sessionStorage.removeItem(KEY_INFLIGHT);
   sessionStorage.removeItem(KEY_INFLIGHT_TOKEN);
+  webllmLog("session: allowAutoloadAgain (user retry or new load tap)");
 }
 
 /**
@@ -51,12 +59,14 @@ export function setInflightBeforeEngineCreate(): void {
     KEY_INFLIGHT_TOKEN,
     `${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
+  webllmLog("session: set inflight=1 (about to call CreateMLCEngine)");
 }
 
 export function clearInflightAfterEngineCreate(): void {
   if (typeof sessionStorage === "undefined") return;
   sessionStorage.removeItem(KEY_INFLIGHT);
   sessionStorage.removeItem(KEY_INFLIGHT_TOKEN);
+  webllmLog("session: cleared inflight (CreateMLCEngine await finished in JS)");
 }
 
 /** True if the last navigation ended mid-`CreateMLCEngine` (tab crash or kill). */

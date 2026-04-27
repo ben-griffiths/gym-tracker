@@ -1,3 +1,4 @@
+import { webllmLog } from "@/lib/webllm-client-log";
 import { getInflightToken, isInflightLoad } from "@/lib/webllm-load-session";
 
 const LS_KEY = "gym.webllm.diag_v1";
@@ -111,6 +112,11 @@ export function webllmDiagBeginLoad(opts: {
   };
   writeSnapshot(next);
   lastProgressWrite = 0;
+  webllmLog("diagnostics: begin load snapshot", {
+    modelId: opts.modelId,
+    contextWindow: opts.contextWindow ?? "default",
+    lowResource: opts.lowResource,
+  });
 }
 
 export function webllmDiagProgress(report: {
@@ -169,6 +175,17 @@ export function webllmDiagUploadIfInflightOnBoot(): void {
         sampleEntries: snap.entries.slice(-12),
       }
     : null;
+  webllmLog(
+    "diagnostics: uploading suspected_tab_crash to /api/webllm-log",
+    {
+      hasSnapshot: load != null,
+      modelId: load?.modelId ?? "(none)",
+      entryCount: load?.entryCount ?? 0,
+      lastProgress: load?.lastProgressText?.slice(0, 80) ?? "",
+      loadIdMismatch: mismatch,
+    },
+    { force: true },
+  );
   void sendPayload({
     source: "gym-webllm",
     version: 1,
@@ -181,6 +198,11 @@ export function webllmDiagUploadIfInflightOnBoot(): void {
 }
 
 export function webllmDiagUploadJsError(message: string): void {
+  webllmLog(
+    "diagnostics: uploading load_js_error to /api/webllm-log",
+    { errorPreview: message.slice(0, 160) },
+    { force: true },
+  );
   const snap = readSnapshot();
   void sendPayload({
     source: "gym-webllm",
