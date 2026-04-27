@@ -58,3 +58,14 @@ export function clearInflightAfterEngineCreate(): void {
   sessionStorage.removeItem(KEY_INFLIGHT);
   sessionStorage.removeItem(KEY_INFLIGHT_TOKEN);
 }
+
+/** True if the last navigation ended mid-`CreateMLCEngine` (tab crash or kill). */
+export function isInflightLoad(): boolean {
+  if (typeof sessionStorage === "undefined") return false;
+  return sessionStorage.getItem(KEY_INFLIGHT) === "1";
+}
+
+export function getInflightToken(): string | null {
+  if (typeof sessionStorage === "undefined") return null;
+  return sessionStorage.getItem(KEY_INFLIGHT_TOKEN);
+}

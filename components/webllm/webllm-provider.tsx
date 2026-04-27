@@ -21,10 +21,18 @@ import {
   allowAutoloadAgain,
   clearInflightAfterEngineCreate,
   consumeLoadCrashIfAny,
+  getInflightToken,
   isAutoloadSkipped,
   setInflightBeforeEngineCreate,
   WEBLLM_LOAD_GATE_MESSAGE,
 } from "@/lib/webllm-load-session";
+import {
+  webllmDiagBeginLoad,
+  webllmDiagOnLoadEnd,
+  webllmDiagProgress,
+  webllmDiagUploadIfInflightOnBoot,
+  webllmDiagUploadJsError,
+} from "@/lib/webllm-diagnostics";
 
 export type WebllmLoadStatus =
   | "idle"
@@ -86,6 +94,8 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
 
   // SessionStorage + UA are client-only: apply once after mount so server HTML matches first paint, then we correct.
   useLayoutEffect(() => {
+    // Before consumeLoadCrashIfAny: upload buffered progress if last session died mid–CreateMLCEngine
+    webllmDiagUploadIfInflightOnBoot();
     deferAutoload.current = prefersLowResourceWebLLM();
     const next = readInitialState();
     setStatus(next.status);
@@ -112,7 +122,23 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       const webllm = await import("@mlc-ai/web-llm");
       const modelId = resolveWebLLMModelId();
       const chatOpts = resolveWebLLMChatOptions();
+      const contextWindow =
+        chatOpts && typeof (chatOpts as { context_window_size?: number }).context_window_size ===
+        "number"
+          ? (chatOpts as { context_window_size: number }).context_window_size
+          : null;
+      const lowRes = prefersLowResourceWebLLM();
       setInflightBeforeEngineCreate();
+      const loadId = getInflightToken();
+      if (loadId) {
+        webllmDiagBeginLoad({
+          loadId,
+          modelId,
+          contextWindow,
+          lowResource: lowRes,
+          webgpu: isWebGPUSupported(),
+        });
+      }
       let engine: MLCEngine;
       try {
         engine = await webllm.CreateMLCEngine(
@@ -126,6 +152,11 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
             },
             initProgressCallback: (report) => {
               if (gen !== loadGenRef.current) return;
+              webllmDiagProgress({
+                progress: report.progress,
+                timeElapsed: report.timeElapsed,
+                text: report.text,
+              });
               setProgress({
                 progress: report.progress,
                 timeElapsed: report.timeElapsed,
@@ -143,17 +174,20 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       }
       if (gen !== loadGenRef.current) {
         await engine.unload().catch(() => {});
+        webllmDiagOnLoadEnd("aborted");
         return;
       }
       allowAutoloadAgain();
       engineRef.current = engine;
       setStatus("ready");
       setProgress(null);
+      webllmDiagOnLoadEnd("ready");
     } catch (err) {
       if (gen !== loadGenRef.current) return;
       clearInflightAfterEngineCreate();
       const message =
         err instanceof Error ? err.message : "Failed to load the local model.";
+      webllmDiagUploadJsError(message);
       setErrorMessage(message);
       setStatus("error");
       setProgress(null);
