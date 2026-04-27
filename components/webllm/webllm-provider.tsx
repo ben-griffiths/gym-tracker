@@ -12,7 +12,10 @@ import {
 } from "react";
 import type { MLCEngine } from "@mlc-ai/web-llm";
 import { isWebGPUSupported } from "@/lib/webllm-capability";
-import { getPublicWebLLMModelId } from "@/lib/webllm-config";
+import {
+  resolveWebLLMChatOptions,
+  resolveWebLLMModelId,
+} from "@/lib/webllm-config";
 
 export type WebllmLoadStatus =
   | "idle"
@@ -63,17 +66,28 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
 
     try {
       const webllm = await import("@mlc-ai/web-llm");
-      const modelId = getPublicWebLLMModelId();
-      const engine = await webllm.CreateMLCEngine(modelId, {
-        initProgressCallback: (report) => {
-          if (gen !== loadGenRef.current) return;
-          setProgress({
-            progress: report.progress,
-            timeElapsed: report.timeElapsed,
-            text: report.text,
-          });
+      const modelId = resolveWebLLMModelId();
+      const chatOpts = resolveWebLLMChatOptions();
+      const engine = await webllm.CreateMLCEngine(
+        modelId,
+        {
+          // Cache API tends to be more reliable than IndexedDB on some mobile
+          // WebViews when large artifacts are involved.
+          appConfig: {
+            ...webllm.prebuiltAppConfig,
+            useIndexedDBCache: false,
+          },
+          initProgressCallback: (report) => {
+            if (gen !== loadGenRef.current) return;
+            setProgress({
+              progress: report.progress,
+              timeElapsed: report.timeElapsed,
+              text: report.text,
+            });
+          },
         },
-      });
+        chatOpts,
+      );
       if (gen !== loadGenRef.current) {
         await engine.unload().catch(() => {});
         return;
