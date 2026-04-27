@@ -2856,6 +2856,16 @@ function WorkoutPageContent() {
               Loading local AI:{" "}
               {Math.round((webllm.progress.progress || 0) * 100)}% —{" "}
               {webllm.progress.text}
+              {process.env.NODE_ENV === "production" ? (
+                <>
+                  <br />
+                  <span className="text-[11px] opacity-90">
+                    First visit from this site downloads the model (can take
+                    minutes). Stay on the page; Wi‑Fi is best. A later visit is
+                    usually faster.
+                  </span>
+                </>
+              ) : null}
             </p>
           ) : null}
           {webllm.status === "awaiting_tap" ? (

@@ -23,12 +23,13 @@ describe("prefersLowResourceWebLLM", () => {
     expect(prefersLowResourceWebLLM()).toBe(true);
   });
 
-  it("is false for desktop Chrome", () => {
+  it("is true for slow network effectiveType", () => {
     vi.stubGlobal("navigator", {
       userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0",
+      connection: { effectiveType: "3g" },
     });
-    expect(prefersLowResourceWebLLM()).toBe(false);
+    expect(prefersLowResourceWebLLM()).toBe(true);
   });
 });
 
@@ -48,5 +49,33 @@ describe("resolveWebLLMModelId", () => {
     });
     vi.stubGlobal("window", {});
     expect(resolveWebLLMModelId()).toBe(WEBLLM_MODEL_ID);
+  });
+});
+
+describe("resolveWebLLMChatOptions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("uses 1024 context in production for low-resource", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubGlobal("navigator", {
+      userAgent: "iPhone",
+    });
+    vi.stubGlobal("window", {});
+    const { resolveWebLLMChatOptions } = await import("../lib/webllm-config");
+    expect(resolveWebLLMChatOptions()?.context_window_size).toBe(1024);
+  });
+
+  it("uses 2048 context in development for low-resource", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubGlobal("navigator", {
+      userAgent: "iPhone",
+    });
+    vi.stubGlobal("window", {});
+    vi.resetModules();
+    const { resolveWebLLMChatOptions } = await import("../lib/webllm-config");
+    expect(resolveWebLLMChatOptions()?.context_window_size).toBe(2048);
   });
 });

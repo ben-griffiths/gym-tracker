@@ -20,13 +20,15 @@ const MOBILE_UA_RE =
 export function prefersLowResourceWebLLM(): boolean {
   if (typeof navigator === "undefined") return false;
   if (MOBILE_UA_RE.test(navigator.userAgent)) return true;
-  if (
-    "connection" in navigator &&
-    (navigator as Navigator & { connection?: { saveData?: boolean } })
-      .connection?.saveData === true
-  ) {
-    return true;
-  }
+  const conn = (
+    navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string };
+    }
+  ).connection;
+  if (conn?.saveData === true) return true;
+  // Slow links (common on cellular) — same WebGPU + download path as mobile; treat as low-resource.
+  const et = conn?.effectiveType;
+  if (et === "slow-2g" || et === "2g" || et === "3g") return true;
   const dm = (navigator as Navigator & { deviceMemory?: number })
     .deviceMemory;
   if (typeof dm === "number" && dm <= 4) return true;

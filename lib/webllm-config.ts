@@ -18,11 +18,17 @@ export function resolveWebLLMModelId(): string {
 
 /**
  * Tighter context on phones to reduce WebGPU memory (KV cache) after load.
+ * Production builds use a smaller window than local dev: Vercel is a new origin
+ * with a cold cache, so the first load is heavier; less KV helps avoid GPU OOM.
  */
 export function resolveWebLLMChatOptions(): ChatOptions | undefined {
   if (typeof window === "undefined") return undefined;
   if (!prefersLowResourceWebLLM()) return undefined;
-  return { context_window_size: 2048 };
+  const context_window_size =
+    typeof process !== "undefined" && process.env.NODE_ENV === "production"
+      ? 1024
+      : 2048;
+  return { context_window_size };
 }
 
 /** @deprecated use resolveWebLLMModelId */
