@@ -16,7 +16,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Copy, Pencil, Undo2 } from "lucide-react";
+import { Copy, Pencil, Share, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -2902,6 +2902,33 @@ function WorkoutPageContent() {
                 Load on-device model
               </Button>
             </p>
+          ) : null}
+          {webllm.status === "requires_pwa_install" ? (
+            <div className="rounded-lg border border-border bg-muted/60 px-2 py-1.5 text-xs text-muted-foreground">
+              <p className="text-center font-medium text-foreground">
+                Install LiftLog to enable on-device AI
+              </p>
+              <p className="mt-1 text-center">
+                iOS Safari limits cached model size to ~1.3 GB outside an
+                installed app, so the 4 GB model can&apos;t finish loading.
+                Adding LiftLog to your Home Screen lifts that limit.
+              </p>
+              <ol className="mx-auto mt-2 flex max-w-xs list-decimal flex-col gap-0.5 pl-5 text-left">
+                <li>
+                  Tap the Share icon{" "}
+                  <Share
+                    className="-mt-0.5 inline h-3.5 w-3.5"
+                    aria-label="Share"
+                  />{" "}
+                  in the Safari toolbar
+                </li>
+                <li>Choose &quot;Add to Home Screen&quot;</li>
+                <li>Open LiftLog from the new Home Screen icon</li>
+              </ol>
+              <p className="mt-2 text-center text-[11px] opacity-80">
+                Chat still works here using local parsing.
+              </p>
+            </div>
           ) : null}
           {webllm.status === "unsupported" ? (
             <p className="rounded-lg border border-border bg-muted/60 px-2 py-1.5 text-center text-xs text-muted-foreground">

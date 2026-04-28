@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { prefersLowResourceWebLLM } from "../lib/webllm-capability";
+import {
+  isIOS,
+  isStandalonePWA,
+  prefersLowResourceWebLLM,
+  requiresIOSPWAInstallForWebLLM,
+} from "../lib/webllm-capability";
 import { WEBLLM_MODEL_ID, resolveWebLLMModelId } from "../lib/webllm-config";
 
 describe("prefersLowResourceWebLLM", () => {
@@ -30,6 +35,92 @@ describe("prefersLowResourceWebLLM", () => {
       connection: { effectiveType: "3g" },
     });
     expect(prefersLowResourceWebLLM()).toBe(true);
+  });
+});
+
+describe("iOS / PWA gating", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("isIOS detects iPhone UA", () => {
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15",
+      maxTouchPoints: 5,
+    });
+    expect(isIOS()).toBe(true);
+  });
+
+  it("isIOS detects iPadOS 13+ desktop UA via touch points", () => {
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+      maxTouchPoints: 5,
+    });
+    expect(isIOS()).toBe(true);
+  });
+
+  it("isIOS is false for desktop Mac without touch", () => {
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+      maxTouchPoints: 0,
+    });
+    expect(isIOS()).toBe(false);
+  });
+
+  it("isStandalonePWA returns true when display-mode standalone matches", () => {
+    vi.stubGlobal("window", {
+      matchMedia: (q: string) => ({ matches: q.includes("standalone") }),
+    });
+    vi.stubGlobal("navigator", {});
+    expect(isStandalonePWA()).toBe(true);
+  });
+
+  it("isStandalonePWA returns true via legacy navigator.standalone", () => {
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal("navigator", { standalone: true });
+    expect(isStandalonePWA()).toBe(true);
+  });
+
+  it("requiresIOSPWAInstallForWebLLM is true for iPhone Safari outside PWA", () => {
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15",
+      maxTouchPoints: 5,
+      standalone: false,
+    });
+    expect(requiresIOSPWAInstallForWebLLM()).toBe(true);
+  });
+
+  it("requiresIOSPWAInstallForWebLLM is false when iOS PWA is installed", () => {
+    vi.stubGlobal("window", {
+      matchMedia: (q: string) => ({ matches: q.includes("standalone") }),
+    });
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15",
+      maxTouchPoints: 5,
+      standalone: true,
+    });
+    expect(requiresIOSPWAInstallForWebLLM()).toBe(false);
+  });
+
+  it("requiresIOSPWAInstallForWebLLM is false on desktop", () => {
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0",
+      maxTouchPoints: 0,
+    });
+    expect(requiresIOSPWAInstallForWebLLM()).toBe(false);
   });
 });
 

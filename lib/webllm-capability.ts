@@ -9,6 +9,44 @@ export function isWebGPUSupported(): boolean {
   );
 }
 
+/**
+ * iPhone, iPod, iPad — including iPadOS 13+ which reports Mac UA but exposes touch.
+ * All iOS browsers share WebKit (App Store policy), so the Cache API quota cliff
+ * applies regardless of browser shell.
+ */
+export function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  if (/iPhone|iPod|iPad/.test(ua)) return true;
+  if (
+    /Macintosh/.test(ua) &&
+    typeof navigator.maxTouchPoints === "number" &&
+    navigator.maxTouchPoints > 1
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Running inside an installed PWA (Add to Home Screen on iOS, install on desktop). */
+export function isStandalonePWA(): boolean {
+  if (typeof window === "undefined") return false;
+  if (window.matchMedia?.("(display-mode: standalone)").matches) return true;
+  const navStandalone = (navigator as Navigator & { standalone?: boolean })
+    .standalone;
+  return navStandalone === true;
+}
+
+/**
+ * iOS Safari outside an installed PWA caps Cache API at ~1.3–1.5 GB and silently
+ * tab-kills WebLLM around shard 36/106 (~33%) of the 7B q4f16 model. Installed
+ * PWAs get persistent storage, lifting the quota. Gating the load behind PWA
+ * install on iOS is the only way to make WebLLM finish on iPhone.
+ */
+export function requiresIOSPWAInstallForWebLLM(): boolean {
+  return isIOS() && !isStandalonePWA();
+}
+
 const MOBILE_UA_RE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 

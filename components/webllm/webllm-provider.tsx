@@ -12,7 +12,11 @@ import {
   type ReactNode,
 } from "react";
 import type { MLCEngineInterface } from "@mlc-ai/web-llm";
-import { isWebGPUSupported, prefersLowResourceWebLLM } from "@/lib/webllm-capability";
+import {
+  isWebGPUSupported,
+  prefersLowResourceWebLLM,
+  requiresIOSPWAInstallForWebLLM,
+} from "@/lib/webllm-capability";
 import {
   resolveWebLLMChatOptions,
   resolveWebLLMModelId,
@@ -57,7 +61,13 @@ export type WebllmLoadStatus =
   | "unsupported"
   | "error"
   /** User must tap to start (avoids auto GPU crash + reload loop on many phones) */
-  | "awaiting_tap";
+  | "awaiting_tap"
+  /**
+   * iOS Safari outside an installed PWA: the per-origin Cache API quota
+   * (~1.3–1.5 GB) is too small for the 7B model (~4 GB) and the tab is silently
+   * killed around 33%. Installed PWAs get persistent storage and load fine.
+   */
+  | "requires_pwa_install";
 
 type InitProgress = {
   progress: number;
@@ -99,6 +109,9 @@ function readInitialState(): {
   }
   if (!isWebGPUSupported()) {
     return { status: "unsupported", error: null };
+  }
+  if (requiresIOSPWAInstallForWebLLM()) {
+    return { status: "requires_pwa_install", error: null };
   }
   if (prefersLowResourceWebLLM()) {
     return { status: "awaiting_tap", error: null };
@@ -165,6 +178,20 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       webllmLog("runLoad: WebGPU not available", { gen }, { force: true });
       if (gen === loadGenRef.current) {
         setTrackedStatus("unsupported");
+        setProgress(null);
+        setErrorMessage(null);
+        setErrorDetail(null);
+      }
+      return false;
+    }
+    if (requiresIOSPWAInstallForWebLLM()) {
+      webllmLog(
+        "runLoad: iOS non-standalone — gating until PWA install (Cache API quota)",
+        { gen },
+        { force: true },
+      );
+      if (gen === loadGenRef.current) {
+        setTrackedStatus("requires_pwa_install");
         setProgress(null);
         setErrorMessage(null);
         setErrorDetail(null);
@@ -329,6 +356,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
           let s = statusRef.current;
           if (s === "unsupported" || s === "error") return null;
           if (s === "awaiting_tap") return null;
+          if (s === "requires_pwa_install") return null;
 
           // idle (deferred desktop) or loading retry
           if (s === "idle") {
