@@ -1,4 +1,5 @@
 import { webllmLog } from "@/lib/webllm-client-log";
+import { readLastWebllmInitProgress } from "@/lib/webllm-init-progress-last";
 import type { StorageBootstrapSnapshot } from "@/lib/webllm-storage-bootstrap";
 import { getInflightToken, isInflightLoad } from "@/lib/webllm-load-session";
 
@@ -42,6 +43,13 @@ type OutgoingPayload = {
     lastProgress: number | null;
     entryCount: number;
     sampleEntries: SnapshotEntry[];
+    /** Unthrottled last line before tab kill (`sessionStorage`); see lib/webllm-init-progress-last.ts */
+    lastScratchSnapshot?: {
+      progress: number;
+      text: string;
+      phase: string;
+      t: number;
+    } | null;
   } | null;
   environment: {
     userAgent: string;
@@ -59,6 +67,21 @@ type OutgoingPayload = {
   /** Inflight session token and snapshot loadId differ (stale or partial storage). */
   loadIdMismatch?: boolean;
 };
+
+function scratchOverlayPayload():
+  | NonNullable<
+      Exclude<OutgoingPayload["load"], null>
+    >["lastScratchSnapshot"]
+  | undefined {
+  const last = readLastWebllmInitProgress();
+  if (!last) return undefined;
+  return {
+    progress: last.progress,
+    text: last.text.slice(0, 2_000),
+    phase: last.phase,
+    t: last.t,
+  };
+}
 
 let lastProgressWrite = 0;
 
@@ -195,6 +218,7 @@ export function webllmDiagUploadIfInflightOnBoot(): void {
         lastProgress: last != null ? last.progress : null,
         entryCount: snap.entries.length,
         sampleEntries: snap.entries.slice(-12),
+        lastScratchSnapshot: scratchOverlayPayload(),
       }
     : null;
   webllmLog(
@@ -244,6 +268,7 @@ export function webllmDiagUploadJsError(message: string): void {
           lastProgress: snap.entries.at(-1)?.progress ?? null,
           entryCount: snap.entries.length,
           sampleEntries: snap.entries.slice(-8),
+          lastScratchSnapshot: scratchOverlayPayload(),
         }
       : null,
     environment: getEnvBox(),

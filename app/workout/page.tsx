@@ -498,7 +498,8 @@ function WorkoutPageContent() {
 
   const chatMutation = useMutation({
     mutationFn: async (input: { message: string; context?: ChatContext }) => {
-      const engine = webllm.getEngine();
+      const engine =
+        (await webllm.ensureEngineForChat()) ?? webllm.getEngine();
       if (!engine) {
         const { parseFallbackSuggestion } = await import("@/lib/workout-parser");
         return parseFallbackSuggestion(input.message, input.context);
@@ -2851,6 +2852,23 @@ function WorkoutPageContent() {
         className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-6"
       >
         <div className="pointer-events-auto mx-auto flex w-full min-w-0 max-w-full flex-col gap-1.5 px-1">
+          {webllm.status === "idle" ? (
+            <p className="flex flex-col gap-1 rounded-lg border border-border bg-muted/60 px-2 py-1.5 text-center text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-center sm:gap-2">
+              <span>
+                On-device AI loads when you send a chat message, or start it
+                now:
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-7 self-center text-xs"
+                onClick={webllm.startModelLoad}
+              >
+                Load model now
+              </Button>
+            </p>
+          ) : null}
           {webllm.status === "loading" && webllm.progress ? (
             <p className="rounded-lg border border-border bg-muted/60 px-2 py-1.5 text-center text-xs text-muted-foreground">
               Loading local AI:{" "}

@@ -17,8 +17,12 @@ import {
   resolveWebLLMChatOptions,
   resolveWebLLMModelId,
 } from "@/lib/webllm-config";
+import { clearLastWebllmInitProgress, recordLastWebllmInitProgress } from "@/lib/webllm-init-progress-last";
 import { loadPreferredWebllmEngine } from "@/lib/webllm-engine-loader";
 import { bootstrapWebLLMStorage } from "@/lib/webllm-storage-bootstrap";
+import {
+  classifyWebllmInitProgressPhase,
+} from "@/lib/webllm-progress-phase";
 import {
   allowAutoloadAgain,
   clearInflightAfterEngineCreate,
@@ -67,8 +71,10 @@ type WebllmContextValue = {
   /** True when the user cannot send chat (model loading, or load error before retry). */
   chatSendBlocked: boolean;
   getEngine: () => MLCEngineInterface | null;
+  /** Await WebLLM before chat; triggers deferred load when status is idle. */
+  ensureEngineForChat: () => Promise<MLCEngineInterface | null>;
   retry: () => void;
-  /** Start the download+compile (only when status is `awaiting_tap`) */
+  /** Start the download+compile (awaiting_tap / idle prefetch) */
   startModelLoad: () => void;
 };
 
@@ -79,7 +85,7 @@ function readInitialState(): {
   error: string | null;
 } {
   if (typeof window === "undefined") {
-    return { status: "loading", error: null };
+    return { status: "idle", error: null };
   }
   const crash = consumeLoadCrashIfAny();
   if (crash) {
@@ -88,53 +94,73 @@ function readInitialState(): {
   if (isAutoloadSkipped()) {
     return { status: "error", error: WEBLLM_LOAD_GATE_MESSAGE };
   }
+  if (!isWebGPUSupported()) {
+    return { status: "unsupported", error: null };
+  }
   if (prefersLowResourceWebLLM()) {
     return { status: "awaiting_tap", error: null };
   }
-  return { status: "loading", error: null };
+  return { status: "idle", error: null };
 }
 
 export function WebllmProvider({ children }: { children: ReactNode }) {
-  const [status, setStatus] = useState<WebllmLoadStatus>("loading");
+  const [status, setStatus] = useState<WebllmLoadStatus>(() =>
+    typeof window !== "undefined" ? readInitialState().status : "idle",
+  );
   const [progress, setProgress] = useState<InitProgress | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [clientReady, setClientReady] = useState(false);
   const engineRef = useRef<MLCEngineInterface | null>(null);
   const loadGenRef = useRef(0);
-  const deferAutoload = useRef(false);
+  const statusRef = useRef<WebllmLoadStatus>(status);
+
+  const setTrackedStatus = useCallback((next: WebllmLoadStatus) => {
+    statusRef.current = next;
+    setStatus(next);
+  }, []);
+
+  /** Serialized ensureEngine callers. */
+  const ensureChainRef = useRef<Promise<MLCEngineInterface | null> | null>(
+    null,
+  );
+  const loadWaitersRef = useRef<(() => void)[]>([]);
+
+  function flushLoadWaiters() {
+    const w = loadWaitersRef.current.splice(0);
+    w.forEach((fn) => fn());
+  }
 
   // SessionStorage + UA are client-only: apply once after mount so server HTML matches first paint, then we correct.
   useLayoutEffect(() => {
     webllmNotifyInspectorBoot();
-    // Before consumeLoadCrashIfAny: upload buffered progress if last session died mid–CreateMLCEngine
     webllmDiagUploadIfInflightOnBoot();
-    deferAutoload.current = prefersLowResourceWebLLM();
     const next = readInitialState();
     webllmLog("mount: client gate", {
       status: next.status,
-      deferAutoload: deferAutoload.current,
       skipAutoload: isAutoloadSkipped(),
     });
-    setStatus(next.status);
+    setTrackedStatus(next.status);
     setErrorMessage(next.error);
     setClientReady(true);
-  }, []);
+  }, [setTrackedStatus]);
 
-  const runLoad = useCallback(async (gen: number) => {
+  const runLoad = useCallback(
+    async (gen: number): Promise<boolean> => {
     webllmLog("runLoad: start", { gen, currentGen: loadGenRef.current });
     webllmLogResetProgressThrottle();
+    clearLastWebllmInitProgress();
     engineRef.current = null;
     if (!isWebGPUSupported()) {
       webllmLog("runLoad: WebGPU not available", { gen }, { force: true });
       if (gen === loadGenRef.current) {
-        setStatus("unsupported");
+        setTrackedStatus("unsupported");
         setProgress(null);
         setErrorMessage(null);
       }
-      return;
+      return false;
     }
 
-    setStatus("loading");
+    setTrackedStatus("loading");
     setProgress(null);
     setErrorMessage(null);
 
@@ -176,7 +202,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       }
       let engine: MLCEngineInterface;
       try {
-        webllmLog("runLoad: await engine init (Web Worker preferred)… (can take several minutes on mobile)", {
+        webllmLog("runLoad: await WebWorkerMLCEngine + reload (web-llm-chat sequence)…", {
           modelId,
         });
         const markAvail = typeof performance?.mark === "function";
@@ -189,6 +215,12 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
             reasonLabel: "runLoad",
             initProgressCallback: (report) => {
               if (gen !== loadGenRef.current) return;
+              recordLastWebllmInitProgress({
+                progress: report.progress,
+                timeElapsed: report.timeElapsed,
+                text: report.text,
+              });
+              const phase = classifyWebllmInitProgressPhase(report.text || "");
               webllmDiagProgress({
                 progress: report.progress,
                 timeElapsed: report.timeElapsed,
@@ -198,7 +230,8 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
                 {
                   progress: report.progress,
                   timeElapsed: report.timeElapsed,
-                  text: report.text,
+                  text:
+                    `[${phase}] ` + (report.text || "").slice(0, 280),
                 },
                 gen,
               );
@@ -228,67 +261,110 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
             }
           }
         }
-        webllmLog("runLoad: engine init Promise resolved (engine ready in JS)", { gen });
+        webllmLog("runLoad: engine init Promise resolved (engine ready in JS)", {
+          gen,
+        });
       } finally {
-        // Tab crash leaves inflight set; a recoverable JS error clears it here.
         if (gen === loadGenRef.current) {
           clearInflightAfterEngineCreate();
         }
       }
       if (gen !== loadGenRef.current) {
-        webllmLog("runLoad: stale generation, unloading and aborting", { gen, current: loadGenRef.current });
+        webllmLog("runLoad: stale generation, unloading and aborting", {
+          gen,
+          current: loadGenRef.current,
+        });
         await engine.unload().catch(() => {});
         webllmDiagOnLoadEnd("aborted");
-        return;
+        return false;
       }
       allowAutoloadAgain();
       engineRef.current = engine;
-      setStatus("ready");
+      setTrackedStatus("ready");
       setProgress(null);
+      clearLastWebllmInitProgress();
       webllmLog("runLoad: success, status=ready", { modelId, gen });
       webllmDiagOnLoadEnd("ready");
+      return true;
     } catch (err) {
-      if (gen !== loadGenRef.current) return;
+      if (gen !== loadGenRef.current) return false;
       clearInflightAfterEngineCreate();
       const message =
         err instanceof Error ? err.message : "Failed to load the local model.";
       webllmLogError("runLoad: catch (load failed)", err, { gen });
       webllmDiagUploadJsError(message);
       setErrorMessage(message);
-      setStatus("error");
+      setTrackedStatus("error");
       setProgress(null);
       engineRef.current = null;
+      return false;
+    } finally {
+      flushLoadWaiters();
     }
-  }, []);
+  },
+    [setTrackedStatus],
+  );
 
+  const ensureEngineForChat =
+    useCallback(async (): Promise<MLCEngineInterface | null> => {
+      return (ensureChainRef.current ??= (async (): Promise<
+        MLCEngineInterface | null
+      > => {
+        try {
+          if (!isWebGPUSupported()) return null;
+          if (engineRef.current) return engineRef.current;
+          let s = statusRef.current;
+          if (s === "unsupported" || s === "error") return null;
+          if (s === "awaiting_tap") return null;
+
+          // idle (deferred desktop) or loading retry
+          if (s === "idle") {
+            loadGenRef.current += 1;
+            const gen = loadGenRef.current;
+            await runLoad(gen);
+            return engineRef.current;
+          }
+          if (s === "loading") {
+            await new Promise<void>((r) => {
+              loadWaitersRef.current.push(r);
+            });
+            return engineRef.current;
+          }
+          if (s === "ready") {
+            return engineRef.current;
+          }
+          return null;
+        } finally {
+          ensureChainRef.current = null;
+        }
+      })());
+    }, [runLoad]);
+
+  /**
+   * No eager autoload: align with chat.webllm.ai — weight load begins on first chat
+   * [`ensureEngineForChat`] or [`startModelLoad`] (desktop idle / awaiting_tap taps).
+   */
   useEffect(() => {
     if (typeof window === "undefined" || !clientReady) return;
-    if (deferAutoload.current) {
-      // Phone / tablet: wait for startModelLoad() so one bad launch does not loop.
-      webllmLog("autoload: skipped (low-resource, awaiting tap to load)");
-      return;
-    }
-    if (isAutoloadSkipped()) {
-      webllmLog("autoload: skipped (skip_autoload in session, user must retry)", {}, { force: true });
-      return;
-    }
-    loadGenRef.current += 1;
-    const gen = loadGenRef.current;
-    webllmLog("autoload: scheduling runLoad", { gen });
-    void runLoad(gen);
+    if (!isWebGPUSupported()) return;
+
+    webllmLog("autoload: deferred (idle until ensureEngineForChat or startModelLoad)");
+
     return () => {
-      // Verbose only: fires often in React 18 Strict Mode (double mount in dev).
-      webllmLog("autoload: cleanup, bump gen and unload", { fromGen: gen });
       loadGenRef.current += 1;
       const e = engineRef.current;
       engineRef.current = null;
       void e?.unload().catch(() => {});
     };
-  }, [clientReady, runLoad]);
+  }, [clientReady]);
 
   const startModelLoad = useCallback(() => {
-    if (status !== "awaiting_tap") return;
-    webllmLog("startModelLoad: user tapped (low-resource path)");
+    if (status !== "awaiting_tap" && status !== "idle") return;
+    webllmLog(
+      status === "awaiting_tap"
+        ? "startModelLoad: user tapped or idle prefetch"
+        : "startModelLoad: prefetch from idle",
+    );
     allowAutoloadAgain();
     setErrorMessage(null);
     loadGenRef.current += 1;
@@ -310,7 +386,6 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo((): WebllmContextValue => {
-    // awaiting_tap: user can still chat via deterministic parsing; only block on active load or hard error
     const chatSendBlocked = status === "loading" || status === "error";
     return {
       status,
@@ -318,10 +393,19 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       errorMessage,
       chatSendBlocked,
       getEngine,
+      ensureEngineForChat,
       retry,
       startModelLoad,
     };
-  }, [status, progress, errorMessage, getEngine, retry, startModelLoad]);
+  }, [
+    status,
+    progress,
+    errorMessage,
+    getEngine,
+    ensureEngineForChat,
+    retry,
+    startModelLoad,
+  ]);
 
   return (
     <WebllmContext.Provider value={value}>{children}</WebllmContext.Provider>

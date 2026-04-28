@@ -1,6 +1,7 @@
 import type {
   ChatOptions,
   InitProgressCallback,
+  LogLevel,
   MLCEngineInterface,
 } from "@mlc-ai/web-llm";
 import { webllmLog, webllmLogError } from "@/lib/webllm-client-log";
@@ -8,8 +9,9 @@ import { webllmLog, webllmLogError } from "@/lib/webllm-client-log";
 type WebllmNamespace = typeof import("@mlc-ai/web-llm");
 
 /**
- * Prefer `CreateWebWorkerMLCEngine` so heavy init runs off the UI thread; fall back to main-thread
- * `CreateMLCEngine` when Workers are missing or throw (some Safari builds).
+ * Same sequence as [web-llm-chat `WebLLMApi.initModel`](https://github.com/mlc-ai/web-llm-chat/blob/main/app/client/webllm.ts):
+ * `new WebWorkerMLCEngine(Worker, engineConfig)` → `setInitProgressCallback` → `await reload(model, chatOpts)`.
+ * Fallback: `new MLCEngine(engineConfig)` → same. (Not `CreateWebWorkerMLCEngine` / `CreateMLCEngine`.)
  */
 export async function loadPreferredWebllmEngine(params: {
   webllm: WebllmNamespace;
@@ -18,12 +20,13 @@ export async function loadPreferredWebllmEngine(params: {
   initProgressCallback: InitProgressCallback;
   reasonLabel?: string;
 }): Promise<MLCEngineInterface> {
-  const engineBase = {
+  const logWarn = "WARN" as LogLevel;
+  const engineConfig = {
     appConfig: {
       ...params.webllm.prebuiltAppConfig,
       useIndexedDBCache: false as const,
     },
-    initProgressCallback: params.initProgressCallback,
+    logLevel: logWarn,
   };
 
   let worker: Worker | undefined;
@@ -33,37 +36,32 @@ export async function loadPreferredWebllmEngine(params: {
         new URL("../workers/mlc.worker.ts", import.meta.url),
         { type: "module" },
       );
-      const eng = await params.webllm.CreateWebWorkerMLCEngine(
-        worker,
-        params.modelId,
-        engineBase,
-        params.chatOpts,
-      );
+      const engine = new params.webllm.WebWorkerMLCEngine(worker, engineConfig);
+      engine.setInitProgressCallback(params.initProgressCallback);
+      await engine.reload(params.modelId, params.chatOpts);
       webllmLog(
-        "engine: WebWorkerMLCEngine",
+        "engine: WebWorkerMLCEngine + reload (web-llm-chat pattern)",
         { modelId: params.modelId, reason: params.reasonLabel ?? "ok" },
         { force: true },
       );
-      return eng;
+      return engine;
     } catch (err) {
       worker?.terminate();
-      webllmLogError("engine: worker path failed, using main thread", err, {
+      webllmLogError("engine: worker path failed, using MLCEngine on main thread", err, {
         modelId: params.modelId,
       });
     }
   } else {
-    webllmLog("engine: Worker API missing, using main thread", {}, { force: true });
+    webllmLog("engine: Worker API missing, using MLCEngine main thread", {}, { force: true });
   }
 
-  const eng = await params.webllm.CreateMLCEngine(
-    params.modelId,
-    engineBase,
-    params.chatOpts,
-  );
+  const engine = new params.webllm.MLCEngine(engineConfig);
+  engine.setInitProgressCallback(params.initProgressCallback);
+  await engine.reload(params.modelId, params.chatOpts);
   webllmLog(
-    "engine: MLCEngine (main thread)",
+    "engine: MLCEngine + reload (main thread)",
     { modelId: params.modelId, reason: params.reasonLabel ?? "fallback" },
     { force: true },
   );
-  return eng;
+  return engine;
 }
