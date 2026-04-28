@@ -48,6 +48,7 @@ import {
   webllmDiagUploadIfInflightOnBoot,
   webllmDiagUploadJsError,
 } from "@/lib/webllm-diagnostics";
+import { formatWebllmLoadError } from "@/lib/webllm-format-error";
 
 export type WebllmLoadStatus =
   | "idle"
@@ -68,6 +69,8 @@ type WebllmContextValue = {
   status: WebllmLoadStatus;
   progress: InitProgress | null;
   errorMessage: string | null;
+  /** Copy-paste diagnostics (multi-line stack, URL, UA) when status is `"error"`. */
+  errorDetail: string | null;
   /** True when the user cannot send chat (model loading, or load error before retry). */
   chatSendBlocked: boolean;
   getEngine: () => MLCEngineInterface | null;
@@ -109,6 +112,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
   );
   const [progress, setProgress] = useState<InitProgress | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [clientReady, setClientReady] = useState(false);
   const engineRef = useRef<MLCEngineInterface | null>(null);
   const loadGenRef = useRef(0);
@@ -140,7 +144,14 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       skipAutoload: isAutoloadSkipped(),
     });
     setTrackedStatus(next.status);
-    setErrorMessage(next.error);
+    if (next.error) {
+      const { summary, detail } = formatWebllmLoadError(next.error);
+      setErrorMessage(summary);
+      setErrorDetail(detail);
+    } else {
+      setErrorMessage(null);
+      setErrorDetail(null);
+    }
     setClientReady(true);
   }, [setTrackedStatus]);
 
@@ -156,6 +167,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
         setTrackedStatus("unsupported");
         setProgress(null);
         setErrorMessage(null);
+        setErrorDetail(null);
       }
       return false;
     }
@@ -163,6 +175,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     setTrackedStatus("loading");
     setProgress(null);
     setErrorMessage(null);
+    setErrorDetail(null);
 
     try {
       webllmLog("runLoad: importing @mlc-ai/web-llm…");
@@ -289,11 +302,11 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       if (gen !== loadGenRef.current) return false;
       clearInflightAfterEngineCreate();
-      const message =
-        err instanceof Error ? err.message : "Failed to load the local model.";
+      const { summary, detail } = formatWebllmLoadError(err);
       webllmLogError("runLoad: catch (load failed)", err, { gen });
-      webllmDiagUploadJsError(message);
-      setErrorMessage(message);
+      webllmDiagUploadJsError(summary);
+      setErrorMessage(summary);
+      setErrorDetail(detail);
       setTrackedStatus("error");
       setProgress(null);
       engineRef.current = null;
@@ -391,6 +404,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       status,
       progress,
       errorMessage,
+      errorDetail,
       chatSendBlocked,
       getEngine,
       ensureEngineForChat,
@@ -401,6 +415,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     status,
     progress,
     errorMessage,
+    errorDetail,
     getEngine,
     ensureEngineForChat,
     retry,

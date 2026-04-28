@@ -16,7 +16,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Pencil, Undo2 } from "lucide-react";
+import { Copy, Pencil, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -2919,18 +2919,43 @@ function WorkoutPageContent() {
             </p>
           ) : null}
           {webllm.status === "error" && webllm.errorMessage ? (
-            <p className="flex flex-col gap-1 rounded-lg border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-center text-xs text-destructive sm:flex-row sm:items-center sm:justify-center sm:gap-2">
-              <span>Model failed: {webllm.errorMessage}</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 self-center text-xs"
-                onClick={webllm.retry}
-              >
-                Retry
-              </Button>
-            </p>
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+              <p className="text-center">
+                Model failed: {webllm.errorMessage}
+              </p>
+              {webllm.errorDetail ? (
+                <pre className="mx-auto mt-2 max-h-48 max-w-full overflow-auto rounded border border-destructive/20 bg-background/80 px-2 py-1.5 text-left font-mono text-[11px] leading-snug break-words whitespace-pre-wrap text-muted-foreground">
+                  {webllm.errorDetail}
+                </pre>
+              ) : null}
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    const text =
+                      webllm.errorDetail ?? webllm.errorMessage ?? "";
+                    void navigator.clipboard.writeText(text).then(() => {
+                      toast.success("Error details copied");
+                    });
+                  }}
+                >
+                  <Copy className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Copy details
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={webllm.retry}
+                >
+                  Retry
+                </Button>
+              </div>
+            </div>
           ) : null}
           <Composer
             onSubmit={handleChatSubmit}
