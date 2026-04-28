@@ -1,4 +1,5 @@
 import { webllmLog } from "@/lib/webllm-client-log";
+import type { StorageBootstrapSnapshot } from "@/lib/webllm-storage-bootstrap";
 import { getInflightToken, isInflightLoad } from "@/lib/webllm-load-session";
 
 const LS_KEY = "gym.webllm.diag_v1";
@@ -47,6 +48,12 @@ type OutgoingPayload = {
     deviceMemory: number | null;
     hardwareConcurrency: number | null;
     platform: string;
+    /** Set from preload bootstrap when available (best-effort). */
+    crossOriginIsolated?: boolean | null;
+    webgpuPresent?: boolean | null;
+    storagePersisted?: boolean | null;
+    storageUsageMB?: number | null;
+    storageQuotaMB?: number | null;
   };
   error?: string;
   /** Inflight session token and snapshot loadId differ (stale or partial storage). */
@@ -54,6 +61,21 @@ type OutgoingPayload = {
 };
 
 let lastProgressWrite = 0;
+
+let preloadDiagContext:
+  | (StorageBootstrapSnapshot & { crossOriginIsolated?: boolean | null })
+  | null = null;
+
+/** Call once per load after `navigator.storage.persist` / `estimate` (same window as Create*). */
+export function webllmDiagSetPreloadContext(
+  snapshot: StorageBootstrapSnapshot & { crossOriginIsolated?: boolean | null },
+): void {
+  preloadDiagContext = snapshot;
+}
+
+function preloadOrNull(): NonNullable<typeof preloadDiagContext> | null {
+  return preloadDiagContext;
+}
 
 function canUseStorage() {
   return typeof localStorage !== "undefined";
@@ -248,6 +270,7 @@ function getEnvBox(): OutgoingPayload["environment"] {
     deviceMemory?: number;
     hardwareConcurrency?: number;
   };
+  const pre = preloadOrNull();
   return {
     userAgent: nav.userAgent.slice(0, 1_200),
     deviceMemory: typeof nav.deviceMemory === "number" ? nav.deviceMemory : null,
@@ -255,6 +278,12 @@ function getEnvBox(): OutgoingPayload["environment"] {
       typeof nav.hardwareConcurrency === "number" ? nav.hardwareConcurrency : null,
     platform: (nav as Navigator & { userAgentData?: { platform?: string } })
       .userAgentData?.platform || nav.platform || "",
+    crossOriginIsolated:
+      typeof window !== "undefined" ? window.crossOriginIsolated : null,
+    webgpuPresent: !!(nav as Navigator & { gpu?: unknown }).gpu,
+    storagePersisted: pre?.persisted ?? null,
+    storageUsageMB: pre?.usageMB ?? null,
+    storageQuotaMB: pre?.quotaMB ?? null,
   };
 }
 

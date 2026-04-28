@@ -9,6 +9,8 @@
  * Also: `NEXT_PUBLIC_WEBLLM_LOG=0` build-time off, or `1` to force on.
  */
 
+import type { StorageBootstrapSnapshot } from "@/lib/webllm-storage-bootstrap";
+
 const LS_KEY = "gym.webllm.log";
 
 export function isWebllmClientLogEnabled(): boolean {
@@ -50,7 +52,7 @@ export function webllmLogProgress(
   lastProgressLogBucket = bucket;
   lastProgressLogTime = now;
   const pct = Math.round((report.progress || 0) * 100);
-  // eslint-disable-next-line no-console -- intentional client debug channel
+   
   console.log(
     `[webllm] init progress ${pct}% (gen ${gen})`,
     (report.text || "").slice(0, 200),
@@ -71,10 +73,10 @@ type WebllmLogOpts = { force?: boolean };
 export function webllmLog(event: string, data?: LogData, opts?: WebllmLogOpts): void {
   if (opts?.force !== true && !isWebllmClientLogEnabled()) return;
   if (data && Object.keys(data).length) {
-    // eslint-disable-next-line no-console -- intentional client debug channel
+     
     console.log(`[webllm] ${event}`, data);
   } else {
-    // eslint-disable-next-line no-console -- intentional client debug channel
+     
     console.log(`[webllm] ${event}`);
   }
 }
@@ -86,21 +88,80 @@ export function webllmLog(event: string, data?: LogData, opts?: WebllmLogOpts): 
 export function webllmNotifyInspectorBoot(): void {
   if (typeof window === "undefined") return;
   // console.warn is shown when “Warnings” is enabled; harder to miss than .log
-  // eslint-disable-next-line no-console -- intentional client debug channel
+   
   console.warn(
     "[webllm] WebLLM client script running — you should see [webllm] logs here. " +
       "Silence: localStorage.setItem('gym.webllm.log','0'); location.reload()",
   );
 }
 
+/**
+ * Single-line environment snapshot for mobile / Vercel debugging (storage, isolation, WebGPU).
+ */
+export async function webllmLogEnvironmentDebug(
+  storage: StorageBootstrapSnapshot,
+  opts?: { force?: boolean },
+): Promise<void> {
+  if (opts?.force !== true && !isWebllmClientLogEnabled()) return;
+  if (typeof window === "undefined") return;
+
+  const eff = (
+    navigator as Navigator & {
+      connection?: { effectiveType?: string };
+    }
+  ).connection?.effectiveType;
+
+  let gpuAdapter: string | null = null;
+  try {
+    const navGpu = (
+      navigator as Navigator & {
+        gpu?: { requestAdapter?: () => Promise<unknown> };
+      }
+    ).gpu;
+    if (navGpu) {
+      const ad = await navGpu.requestAdapter?.();
+      if (ad && typeof ad === "object") {
+        const withInfo = ad as {
+          requestAdapterInfo?: () => Promise<{ device?: string }>;
+        };
+        if (typeof withInfo.requestAdapterInfo === "function") {
+          const info = await withInfo.requestAdapterInfo();
+          gpuAdapter = info?.device ?? "unknown";
+        } else {
+          gpuAdapter = "adapter";
+        }
+      }
+    }
+  } catch {
+    gpuAdapter = null;
+  }
+
+  const data: LogData = {
+    crossOriginIsolated: window.crossOriginIsolated,
+    webgpu: !!(
+      navigator as Navigator & {
+        gpu?: unknown;
+      }
+    ).gpu,
+    storagePersisted: storage.persisted,
+    storageUsageMB: storage.usageMB,
+    storageQuotaMB: storage.quotaMB,
+    effectiveType: eff ?? null,
+    standalonePWA: window.matchMedia("(display-mode: standalone)").matches,
+    gpuAdapter,
+  };
+   
+  console.log(`[webllm] environment (pre-load)`, data);
+}
+
 /** Shown for load failures even when verbose is off. */
 export function webllmLogError(event: string, err: unknown, extra?: LogData): void {
   const message = err instanceof Error ? err.message : String(err);
   if (extra && Object.keys(extra).length) {
-    // eslint-disable-next-line no-console -- intentional client debug channel
+     
     console.error(`[webllm] ${event}`, { ...extra, errorMessage: message });
   } else {
-    // eslint-disable-next-line no-console -- intentional client debug channel
+     
     console.error(`[webllm] ${event}`, message);
   }
 }

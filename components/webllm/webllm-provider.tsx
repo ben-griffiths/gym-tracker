@@ -11,12 +11,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { MLCEngine } from "@mlc-ai/web-llm";
+import type { MLCEngineInterface } from "@mlc-ai/web-llm";
 import { isWebGPUSupported, prefersLowResourceWebLLM } from "@/lib/webllm-capability";
 import {
   resolveWebLLMChatOptions,
   resolveWebLLMModelId,
 } from "@/lib/webllm-config";
+import { loadPreferredWebllmEngine } from "@/lib/webllm-engine-loader";
+import { bootstrapWebLLMStorage } from "@/lib/webllm-storage-bootstrap";
 import {
   allowAutoloadAgain,
   clearInflightAfterEngineCreate,
@@ -28,6 +30,7 @@ import {
 } from "@/lib/webllm-load-session";
 import {
   webllmLog,
+  webllmLogEnvironmentDebug,
   webllmLogError,
   webllmLogProgress,
   webllmLogResetProgressThrottle,
@@ -37,6 +40,7 @@ import {
   webllmDiagBeginLoad,
   webllmDiagOnLoadEnd,
   webllmDiagProgress,
+  webllmDiagSetPreloadContext,
   webllmDiagUploadIfInflightOnBoot,
   webllmDiagUploadJsError,
 } from "@/lib/webllm-diagnostics";
@@ -62,7 +66,7 @@ type WebllmContextValue = {
   errorMessage: string | null;
   /** True when the user cannot send chat (model loading, or load error before retry). */
   chatSendBlocked: boolean;
-  getEngine: () => MLCEngine | null;
+  getEngine: () => MLCEngineInterface | null;
   retry: () => void;
   /** Start the download+compile (only when status is `awaiting_tap`) */
   startModelLoad: () => void;
@@ -95,7 +99,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
   const [progress, setProgress] = useState<InitProgress | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [clientReady, setClientReady] = useState(false);
-  const engineRef = useRef<MLCEngine | null>(null);
+  const engineRef = useRef<MLCEngineInterface | null>(null);
   const loadGenRef = useRef(0);
   const deferAutoload = useRef(false);
 
@@ -144,6 +148,13 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
         modelId,
         hasContextOverride: chatOpts != null,
       });
+      const storageBootstrap = await bootstrapWebLLMStorage();
+      webllmDiagSetPreloadContext({
+        ...storageBootstrap,
+        crossOriginIsolated:
+          typeof window !== "undefined" ? window.crossOriginIsolated : null,
+      });
+      await webllmLogEnvironmentDebug(storageBootstrap, { force: true });
       const contextWindow =
         chatOpts && typeof (chatOpts as { context_window_size?: number }).context_window_size ===
         "number"
@@ -161,22 +172,21 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
           webgpu: isWebGPUSupported(),
         });
       } else {
-        webllmLog("runLoad: no loadId (unexpected before CreateMLCEngine)", {}, { force: true });
+        webllmLog("runLoad: no loadId (unexpected before engine create)", {}, { force: true });
       }
-      let engine: MLCEngine;
+      let engine: MLCEngineInterface;
       try {
-        webllmLog("runLoad: await CreateMLCEngine… (this can take several minutes on mobile)", {
+        webllmLog("runLoad: await engine init (Web Worker preferred)… (can take several minutes on mobile)", {
           modelId,
         });
-        engine = await webllm.CreateMLCEngine(
-          modelId,
-          {
-            // Cache API tends to be more reliable than IndexedDB on some mobile
-            // WebViews when large artifacts are involved.
-            appConfig: {
-              ...webllm.prebuiltAppConfig,
-              useIndexedDBCache: false,
-            },
+        const markAvail = typeof performance?.mark === "function";
+        if (markAvail) performance.mark("webllm-load-engine-start");
+        try {
+          engine = await loadPreferredWebllmEngine({
+            webllm,
+            modelId,
+            chatOpts,
+            reasonLabel: "runLoad",
             initProgressCallback: (report) => {
               if (gen !== loadGenRef.current) return;
               webllmDiagProgress({
@@ -198,10 +208,27 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
                 text: report.text,
               });
             },
-          },
-          chatOpts,
-        );
-        webllmLog("runLoad: CreateMLCEngine Promise resolved (engine ready in JS)", { gen });
+          });
+        } finally {
+          if (markAvail) {
+            performance.mark("webllm-load-engine-end");
+            if (typeof performance.measure === "function") {
+              try {
+                const m = performance.measure(
+                  "webllm-load-engine",
+                  "webllm-load-engine-start",
+                  "webllm-load-engine-end",
+                );
+                webllmLog("runLoad: performance webllm-load-engine", {
+                  durationMs: Math.round(m.duration),
+                });
+              } catch {
+                // duplicate measure / missing marks in some environments
+              }
+            }
+          }
+        }
+        webllmLog("runLoad: engine init Promise resolved (engine ready in JS)", { gen });
       } finally {
         // Tab crash leaves inflight set; a recoverable JS error clears it here.
         if (gen === loadGenRef.current) {
@@ -278,7 +305,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     void runLoad(gen);
   }, [runLoad]);
 
-  const getEngine = useCallback((): MLCEngine | null => {
+  const getEngine = useCallback((): MLCEngineInterface | null => {
     return engineRef.current;
   }, []);
 

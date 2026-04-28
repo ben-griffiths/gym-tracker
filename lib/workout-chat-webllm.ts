@@ -1,5 +1,5 @@
 import { ZodError } from "zod";
-import type { MLCEngine } from "@mlc-ai/web-llm";
+import type { MLCEngineInterface } from "@mlc-ai/web-llm";
 import {
   assembleSuggestion,
   buildSystemPrompt,
@@ -14,7 +14,7 @@ import type { ChatContext, ChatSetSuggestion } from "@/lib/types/workout";
  * In-browser chat path: WebLLM Chat Completions + shared assembleSuggestion / fallbacks.
  */
 export async function runChatAgentWebLLM(
-  engine: MLCEngine,
+  engine: MLCEngineInterface,
   input: { message: string; context: ChatContext | undefined },
 ): Promise<{
   suggestion: ChatSetSuggestion;

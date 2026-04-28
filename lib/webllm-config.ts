@@ -1,7 +1,13 @@
 import type { ChatOptions } from "@mlc-ai/web-llm";
 import { prefersLowResourceWebLLM } from "@/lib/webllm-capability";
 
-/** Fixed WebLLM checkpoint (Hermes‑2 Mistral 7B). No env overrides — avoids drift between hosts */
+/**
+ * Single global WebLLM checkpoint. Pinned to **`Hermes-2-Pro-Mistral-7B-q4f16_1-MLC`** —
+ * the smallest model in `@mlc-ai/web-llm`'s `functionCallingModelIds` set for this package
+ * version, so `chat.completions.create` with `tools` (see `lib/chat-agent.ts`) keeps working.
+ * Smaller Hermes checkpoints may exist in `prebuiltAppConfig` but are not registered for
+ * function-calling in the engine; switching ID without MLC support would break tool use.
+ */
 export const WEBLLM_MODEL_ID = "Hermes-2-Pro-Mistral-7B-q4f16_1-MLC";
 
 /** @deprecated use WEBLLM_MODEL_ID / resolveWebLLMModelId */
