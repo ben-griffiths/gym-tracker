@@ -43,7 +43,7 @@ import {
   ExerciseBlockCard,
   type BlockSet,
 } from "@/components/workout/exercise-block-card";
-import { WebllmProvider, useWebllm } from "@/components/webllm/webllm-provider";
+import { useWebllm } from "@/components/webllm/webllm-provider";
 import {
   createManySets,
   createSet,
@@ -2997,9 +2997,5 @@ function WorkoutPageContent() {
 }
 
 export default function Home() {
-  return (
-    <WebllmProvider>
-      <WorkoutPageContent />
-    </WebllmProvider>
-  );
+  return <WorkoutPageContent />;
 }

@@ -5,6 +5,8 @@ import { ThemeProvider } from "@teispace/next-themes";
 import { ReactNode, useState } from "react";
 import { ThemeFavicon } from "@/components/layout/theme-favicon";
 import { Toaster } from "@/components/ui/sonner";
+import { WebllmProvider } from "@/components/webllm/webllm-provider";
+import { WebllmInstallOverlay } from "@/components/webllm/webllm-install-overlay";
 
 type ProvidersProps = {
   children: ReactNode;
@@ -24,7 +26,10 @@ export function Providers({ children }: ProvidersProps) {
         disableTransitionOnChange
       >
         <ThemeFavicon />
-        {children}
+        <WebllmProvider>
+          {children}
+          <WebllmInstallOverlay />
+        </WebllmProvider>
         <Toaster richColors position="top-center" />
       </ThemeProvider>
     </QueryClientProvider>

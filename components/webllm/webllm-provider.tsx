@@ -113,16 +113,20 @@ function readInitialState(): {
   if (requiresIOSPWAInstallForWebLLM()) {
     return { status: "requires_pwa_install", error: null };
   }
-  if (prefersLowResourceWebLLM()) {
-    return { status: "awaiting_tap", error: null };
-  }
+  // Auto-install on first paint regardless of device class — the smaller 1B
+  // model fits comfortably on mobile, and the user shouldn't have to tap
+  // "Load model" before chat works. Crash recovery still applies above
+  // (consumeLoadCrashIfAny / isAutoloadSkipped).
   return { status: "idle", error: null };
 }
 
 export function WebllmProvider({ children }: { children: ReactNode }) {
-  const [status, setStatus] = useState<WebllmLoadStatus>(() =>
-    typeof window !== "undefined" ? readInitialState().status : "idle",
-  );
+  // Always start in `"idle"` so the SSR HTML and the first client render match
+  // exactly (avoids hydration mismatches in the footer status banners that
+  // wrap `<Composer>`). The real status is computed in a `useLayoutEffect`
+  // below — `readInitialState()` reads `sessionStorage` and `navigator.gpu`,
+  // both of which are client-only and would otherwise diverge from SSR.
+  const [status, setStatus] = useState<WebllmLoadStatus>("idle");
   const [progress, setProgress] = useState<InitProgress | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
@@ -382,14 +386,22 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     }, [runLoad]);
 
   /**
-   * No eager autoload: align with chat.webllm.ai — weight load begins on first chat
-   * [`ensureEngineForChat`] or [`startModelLoad`] (desktop idle / awaiting_tap taps).
+   * Eager autoload on first paint so the user never has to tap a "Load model"
+   * button. We only kick this off from `idle` — `unsupported`, `error`,
+   * `requires_pwa_install`, and the crash-recovery skip path are all left
+   * alone. The full-screen "Installing AI…" overlay is rendered while
+   * `status === "loading"`.
    */
   useEffect(() => {
     if (typeof window === "undefined" || !clientReady) return;
     if (!isWebGPUSupported()) return;
+    if (statusRef.current !== "idle") return;
+    if (isAutoloadSkipped()) return;
 
-    webllmLog("autoload: deferred (idle until ensureEngineForChat or startModelLoad)");
+    webllmLog("autoload: starting eager load on app first paint");
+    loadGenRef.current += 1;
+    const gen = loadGenRef.current;
+    void runLoad(gen);
 
     return () => {
       loadGenRef.current += 1;
@@ -397,7 +409,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       engineRef.current = null;
       void e?.unload().catch(() => {});
     };
-  }, [clientReady]);
+  }, [clientReady, runLoad]);
 
   const startModelLoad = useCallback(() => {
     if (status !== "awaiting_tap" && status !== "idle") return;
