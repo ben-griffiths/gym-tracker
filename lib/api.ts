@@ -17,7 +17,7 @@
 
 import type { EffortFeel, VisionRecognitionResponse } from "@/lib/types/workout";
 import { getLocalDb, newUuid, nowIso } from "@/lib/sync/db";
-import { enqueueMutation, kickSync } from "@/lib/sync/engine";
+import { enqueueMutation, flushOutboxOnce } from "@/lib/sync/engine";
 import type {
   ExerciseRow,
   SessionExerciseRow,
@@ -231,7 +231,7 @@ export async function createWorkoutSession(input: {
     },
   );
 
-  void kickSync();
+  await flushOutboxOnce();
 
   return {
     group: { id: group.id, name: group.name },
@@ -292,7 +292,7 @@ export async function updateSet(
       payload: serverShape(updated),
     });
   });
-  void kickSync();
+  await flushOutboxOnce();
   return { id: setId };
 }
 
@@ -325,7 +325,7 @@ async function softDelete<T extends "set_entries" | "workout_sessions">(
       payload: serverShape(updated as Record<string, unknown>),
     });
   });
-  void kickSync();
+  await flushOutboxOnce();
   return { id };
 }
 
@@ -363,7 +363,7 @@ export async function patchWorkoutTranscript(
       payload: serverShape(updated),
     });
   });
-  void kickSync();
+  await flushOutboxOnce();
 }
 
 export async function registerSessionExercise(
@@ -377,7 +377,7 @@ export async function registerSessionExercise(
     sessionId,
     exercise,
   );
-  void kickSync();
+  await flushOutboxOnce();
   return {
     sessionExercise: {
       id: sessionExercise.id,
@@ -452,7 +452,7 @@ export async function createSet(payload: CreateSetInput) {
     exercise,
   );
   const created = await insertSet(userId, sessionExercise, payload);
-  void kickSync();
+  await flushOutboxOnce();
   return {
     created: {
       id: created.id,
@@ -511,7 +511,7 @@ export async function createManySets(payload: {
     });
     created.push(row);
   }
-  void kickSync();
+  await flushOutboxOnce();
   return {
     created: created.map((c) => ({
       id: c.id,

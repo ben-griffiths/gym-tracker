@@ -62,6 +62,23 @@ export function subscribeSync(listener: Listener): () => void {
 let inflight: Promise<void> | null = null;
 let pendingKick = false;
 
+/**
+ * Push the outbox to the server and wait for completion. Used by lib/api.ts
+ * mutations when the device is online so that callers (legacy GET endpoints)
+ * see fresh data on the next read. Silently no-ops when offline.
+ */
+export async function flushOutboxOnce(): Promise<void> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  try {
+    await drainOutbox();
+    const pending = await getLocalDb().outbox.count();
+    emit({ pendingMutations: pending });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    emit({ status: "error", lastError: message });
+  }
+}
+
 export function kickSync(): Promise<void> {
   if (inflight) {
     pendingKick = true;
@@ -137,11 +154,75 @@ async function drainOutbox(): Promise<void> {
         const ids = batch.map((m) => m.id!).filter((id): id is number => id != null);
         await db.outbox.bulkDelete(ids);
 
-        for (const r of parsed.results) {
+        for (let i = 0; i < parsed.results.length; i++) {
+          const r = parsed.results[i]!;
+          const sent = batch[i];
+          const serverId = r.server_row.id as string;
+          if (sent && sent.row_id !== serverId) {
+            await remapId(r.table, sent.row_id, serverId);
+          }
           await applyServerRow(r.table, r.server_row as ServerRow);
         }
       },
     );
+  }
+}
+
+/**
+ * The server adopted an existing row's id (unique-key conflict on slug/name).
+ * Rewrite our local row + any FK references + any pending outbox payloads.
+ */
+async function remapId(
+  table: SyncTable,
+  oldId: string,
+  newId: string,
+): Promise<void> {
+  const db = getLocalDb();
+  const store = db.table(table) as unknown as {
+    get(id: string): Promise<SyncRow | undefined>;
+    delete(id: string): Promise<void>;
+  };
+  const local = await store.get(oldId);
+  if (local) await store.delete(oldId);
+
+  if (table === "workout_groups") {
+    const dependents = await db.workout_sessions
+      .where("workout_group_id")
+      .equals(oldId)
+      .toArray();
+    for (const dep of dependents) {
+      await db.workout_sessions.put({ ...dep, workout_group_id: newId });
+    }
+  } else if (table === "exercises") {
+    const dependents = await db.session_exercises
+      .where("exercise_id")
+      .equals(oldId)
+      .toArray();
+    for (const dep of dependents) {
+      await db.session_exercises.put({ ...dep, exercise_id: newId });
+    }
+  }
+
+  // Rewrite any pending outbox entries that reference the old id.
+  const pending = await db.outbox.toArray();
+  for (const entry of pending) {
+    if (entry.row_id === oldId) {
+      entry.row_id = newId;
+      (entry.payload as Record<string, unknown>).id = newId;
+      await db.outbox.put(entry);
+      continue;
+    }
+    const payload = entry.payload as Record<string, unknown>;
+    let dirty = false;
+    if (table === "workout_groups" && payload.workout_group_id === oldId) {
+      payload.workout_group_id = newId;
+      dirty = true;
+    }
+    if (table === "exercises" && payload.exercise_id === oldId) {
+      payload.exercise_id = newId;
+      dirty = true;
+    }
+    if (dirty) await db.outbox.put(entry);
   }
 }
 

@@ -150,6 +150,7 @@ export async function listWorkoutGroups(client: AppSupabaseClient, userId: strin
     .from("workout_groups")
     .select("*")
     .eq("user_id", userId)
+    .is("deleted_at", null)
     .order("updated_at", { ascending: false })
     .limit(8);
 
@@ -162,6 +163,7 @@ export async function listWorkoutGroups(client: AppSupabaseClient, userId: strin
     .from("workout_sessions")
     .select("*")
     .eq("user_id", userId)
+    .is("deleted_at", null)
     .in("workout_group_id", groupIds)
     .order("started_at", { ascending: false });
   if (sessionsError) throw sessionsError;
@@ -174,6 +176,7 @@ export async function listWorkoutGroups(client: AppSupabaseClient, userId: strin
       .from("session_exercises")
       .select("*")
       .eq("user_id", userId)
+      .is("deleted_at", null)
       .in("session_id", sessionIds)
       .order("order_index", { ascending: true });
     if (error) throw error;
@@ -194,6 +197,7 @@ export async function listWorkoutGroups(client: AppSupabaseClient, userId: strin
       .from("exercises")
       .select("*")
       .eq("user_id", userId)
+      .is("deleted_at", null)
       .in("id", exerciseIds);
     if (error) throw error;
     const exerciseRows = (data ?? []) as ExerciseRow[];
@@ -207,6 +211,7 @@ export async function listWorkoutGroups(client: AppSupabaseClient, userId: strin
       .from("set_entries")
       .select("*")
       .eq("user_id", userId)
+      .is("deleted_at", null)
       .in("session_exercise_id", sessionExerciseIds)
       .order("set_number", { ascending: true });
     if (error) throw error;

@@ -107,10 +107,23 @@ export async function POST(request: Request) {
     server_row: Record<string, unknown>;
   }> = [];
 
+  // Within a single batch, an earlier mutation may adopt a different
+  // server-side id (slug/name conflict). Track those remaps and rewrite
+  // dependent FKs in later mutations of the same batch before they're sent
+  // to Supabase, so we never hit a foreign-key violation mid-batch.
+  const idRemap = new Map<string, string>();
+
   for (const m of parsed.data.mutations) {
+    const rewritten: PushMutation = {
+      ...m,
+      row_id: idRemap.get(m.row_id) ?? m.row_id,
+      payload: rewriteFks(m.payload, idRemap),
+    };
     try {
-      const rowResult = await applyMutation(client, userId, m);
-      results.push(rowResult);
+      const rowResult = await applyMutation(client, userId, rewritten);
+      const newId = rowResult.server_row.id as string | undefined;
+      if (newId && newId !== m.row_id) idRemap.set(m.row_id, newId);
+      results.push({ ...rowResult, row_id: m.row_id });
     } catch (error) {
       console.error("sync/push mutation failed", { table: m.table, id: m.row_id, error });
       const mapped = mapSupabaseRouteError(error);
@@ -122,6 +135,19 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ results });
+}
+
+function rewriteFks(
+  payload: Record<string, unknown>,
+  remap: Map<string, string>,
+): Record<string, unknown> {
+  if (remap.size === 0) return payload;
+  const out = { ...payload };
+  for (const key of ["workout_group_id", "exercise_id", "session_id", "session_exercise_id"]) {
+    const v = out[key];
+    if (typeof v === "string" && remap.has(v)) out[key] = remap.get(v);
+  }
+  return out;
 }
 
 // Supabase client typing is opaque here — Extract gives us the success branch.
@@ -154,11 +180,39 @@ async function applyMutation(
     );
   }
 
+  // For tables that have a unique key OTHER THAN id (workout_groups: slug,
+  // exercises: name), look up any existing row by that key first. If found,
+  // adopt its id so we never insert a duplicate. The client will reconcile
+  // its local id with the returned server id.
+  let canonicalId = row_id;
+  if (table === "workout_groups" && typeof baseRow.slug === "string") {
+    const lookup = await client
+      .from("workout_groups")
+      .select("id, client_updated_at")
+      .eq("user_id", userId)
+      .eq("slug", baseRow.slug)
+      .maybeSingle();
+    if (lookup.error && lookup.error.code !== "PGRST116") throw lookup.error;
+    const found = lookup.data as { id: string } | null;
+    if (found && found.id !== row_id) canonicalId = found.id;
+  } else if (table === "exercises" && typeof baseRow.name === "string") {
+    const lookup = await client
+      .from("exercises")
+      .select("id, client_updated_at")
+      .eq("user_id", userId)
+      .ilike("name", baseRow.name as string)
+      .maybeSingle();
+    if (lookup.error && lookup.error.code !== "PGRST116") throw lookup.error;
+    const found = lookup.data as { id: string } | null;
+    if (found && found.id !== row_id) canonicalId = found.id;
+  }
+  baseRow.id = canonicalId;
+
   // LWW: only apply if no existing row OR existing.client_updated_at < incoming.
   const existing = await client
     .from(table)
     .select("client_updated_at")
-    .eq("id", row_id)
+    .eq("id", canonicalId)
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -189,7 +243,7 @@ async function applyMutation(
   const fetched = await client
     .from(table)
     .select("*")
-    .eq("id", row_id)
+    .eq("id", canonicalId)
     .eq("user_id", userId)
     .single();
   if (fetched.error) throw fetched.error;
