@@ -6,18 +6,16 @@
  *      whenever the device is online. The same engine pulls /api/sync/pull
  *      back into Dexie so other devices' edits show up.
  *
- * Reads still use the legacy GET /api/workouts route handler today; a
- * service worker caches that response so the UI loads offline. (Migrating
- * reads to live Dexie queries is a follow-up — the sync metadata to do so
- * is already populated.)
- *
- * Return shapes here mirror the legacy /api/* responses so existing UI
- * callers (workout/page.tsx, history-sheet.tsx) keep working unchanged.
+ * Reads come from Dexie via lib/sync/workouts-live.ts (`useHistoryGroups`).
+ * The local row update in step 2 reactively re-renders subscribers — the
+ * UI doesn't wait on the network. Return shapes here still mirror the
+ * legacy /api/* responses so existing callers (workout/page.tsx,
+ * history-sheet.tsx) consume the synthetic payload unchanged.
  */
 
 import type { EffortFeel, VisionRecognitionResponse } from "@/lib/types/workout";
 import { getLocalDb, newUuid, nowIso } from "@/lib/sync/db";
-import { enqueueMutation, flushOutboxOnce } from "@/lib/sync/engine";
+import { enqueueMutation, kickSync } from "@/lib/sync/engine";
 import type {
   ExerciseRow,
   SessionExerciseRow,
@@ -240,7 +238,7 @@ export async function createWorkoutSession(input: {
     },
   );
 
-  await flushOutboxOnce();
+  void kickSync();
 
   return {
     group: { id: group.id, name: group.name },
@@ -301,7 +299,7 @@ export async function updateSet(
       payload: serverShape(updated),
     });
   });
-  await flushOutboxOnce();
+  void kickSync();
   return { id: setId };
 }
 
@@ -348,7 +346,7 @@ async function softDelete<T extends "set_entries" | "workout_sessions">(
     });
   }
 
-  await flushOutboxOnce();
+  void kickSync();
   return { id };
 }
 
@@ -386,7 +384,7 @@ export async function patchWorkoutTranscript(
       payload: serverShape(updated),
     });
   });
-  await flushOutboxOnce();
+  void kickSync();
 }
 
 export async function registerSessionExercise(
@@ -400,7 +398,7 @@ export async function registerSessionExercise(
     sessionId,
     exercise,
   );
-  await flushOutboxOnce();
+  void kickSync();
   return {
     sessionExercise: {
       id: sessionExercise.id,
@@ -475,7 +473,7 @@ export async function createSet(payload: CreateSetInput) {
     exercise,
   );
   const created = await insertSet(userId, sessionExercise, payload);
-  await flushOutboxOnce();
+  void kickSync();
   return {
     created: {
       id: created.id,
@@ -534,7 +532,7 @@ export async function createManySets(payload: {
     });
     created.push(row);
   }
-  await flushOutboxOnce();
+  void kickSync();
   return {
     created: created.map((c) => ({
       id: c.id,

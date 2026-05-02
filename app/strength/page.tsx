@@ -2,11 +2,10 @@
 
 import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Dumbbell } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { getExerciseBySlug } from "@/lib/exercises";
-import { type HistoryResponse } from "@/lib/workout-history";
+import { useHistoryGroups } from "@/lib/sync/workouts-live";
 import { AverageLiftLevelCard } from "@/components/strength/average-lift-level-card";
 import {
   TIERS,
@@ -22,23 +21,7 @@ function tierIndex(tier: StrengthTier): number {
 }
 
 export default function StrengthOverviewPage() {
-  const historyQuery = useQuery<HistoryResponse>({
-    queryKey: ["workouts"],
-    queryFn: async () => {
-      const response = await fetch("/api/workouts");
-      if (!response.ok) {
-        let message = "Failed to load history";
-        try {
-          const body = (await response.json()) as { error?: string };
-          if (body.error) message = body.error;
-        } catch {}
-        throw new Error(message);
-      }
-      return response.json();
-    },
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const historyQuery = useHistoryGroups();
 
   const sessions = (historyQuery.data?.groups ?? []).flatMap((group) =>
     group.sessions,

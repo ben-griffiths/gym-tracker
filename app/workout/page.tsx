@@ -10,11 +10,8 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
+import { useHistoryGroups } from "@/lib/sync/workouts-live";
 import { toast } from "sonner";
 import { Copy, Pencil, Share, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -80,7 +77,6 @@ import {
   formatWorkoutTitle,
   groupByExercise,
   rehydrationExerciseGroupsInOrder,
-  type HistoryResponse,
 } from "@/lib/workout-history";
 import {
   computeSlugToBlockId,
@@ -210,7 +206,6 @@ function ExerciseBlockStickyFrame({
 
 function WorkoutPageContent() {
   const webllm = useWebllm();
-  const queryClient = useQueryClient();
   // `?edit=<id>` switches the chat into "resume this session" mode. We can't
   // read it via a `useState` initializer because in a "use client" page that
   // renders during SSR `window` is undefined on the server, React hydrates
@@ -287,7 +282,6 @@ function WorkoutPageContent() {
     );
     try {
       await patchWorkoutTranscript(sessionIdRef.current, raw);
-      queryClient.invalidateQueries({ queryKey: ["workouts"] });
     } catch (err) {
       console.error("Failed to persist chat transcript", err);
     }
@@ -409,7 +403,6 @@ function WorkoutPageContent() {
       merged.messages.map((m) => m.id),
     );
     void flushTranscriptSave();
-    queryClient.invalidateQueries({ queryKey: ["workouts"] });
   }
 
   function collapseOthers(keepExpandedId: string | null) {
@@ -513,26 +506,9 @@ function WorkoutPageContent() {
     },
   });
 
-  // Pull the user's past sessions so we can offer "start from last workout"
-  // templates at the top of a fresh chat. Shares the same query key as the
-  // home page so both views stay in sync via React Query's cache.
-  const historyQuery = useQuery<HistoryResponse>({
-    queryKey: ["workouts"],
-    queryFn: async () => {
-      const response = await fetch("/api/workouts");
-      if (!response.ok) {
-        let message = "Failed to load history";
-        try {
-          const body = (await response.json()) as { error?: string };
-          if (body.error) message = body.error;
-        } catch {}
-        throw new Error(message);
-      }
-      return response.json();
-    },
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  // Pull the user's past sessions from Dexie. The live query re-runs on
+  // every local mutation so the chat reflects edits without a network hop.
+  const historyQuery = useHistoryGroups();
 
   const sessionFromHistory = useMemo(() => {
     if (!sessionId || !historyQuery.data) return null;
@@ -920,7 +896,6 @@ function WorkoutPageContent() {
       if (!sid || storageModeRef.current !== "database") return;
       try {
         await registerSessionExercise(sid, exercise.name);
-        queryClient.invalidateQueries({ queryKey: ["workouts"] });
       } catch (err) {
         console.error("registerSessionExercise", err);
       }
@@ -969,7 +944,7 @@ function WorkoutPageContent() {
         .map((set) => set.dbId)
         .filter((id): id is string => Boolean(id))
         .map((id) => deleteSet(id).catch(() => undefined)),
-    ).then(() => queryClient.invalidateQueries({ queryKey: ["workouts"] }));
+    );
 
     return true;
   }
@@ -1027,7 +1002,6 @@ function WorkoutPageContent() {
         // behaves like an unsynced entry until the next mutation.
       }
     }
-    queryClient.invalidateQueries({ queryKey: ["workouts"] });
   }
 
   function replaceBlockExercise(blockId: string, nextExercise: ExerciseRecord) {
@@ -1055,8 +1029,8 @@ function WorkoutPageContent() {
       .map((entry) => entry.dbId)
       .filter((id): id is string => Boolean(id));
     if (dbIds.length > 0) {
-      Promise.all(dbIds.map((id) => deleteSet(id).catch(() => undefined))).then(
-        () => queryClient.invalidateQueries({ queryKey: ["workouts"] }),
+      void Promise.all(
+        dbIds.map((id) => deleteSet(id).catch(() => undefined)),
       );
     }
   }
@@ -1078,11 +1052,7 @@ function WorkoutPageContent() {
     });
 
     if (target.dbId) {
-      deleteSet(target.dbId)
-        .catch(() => undefined)
-        .finally(() =>
-          queryClient.invalidateQueries({ queryKey: ["workouts"] }),
-        );
+      void deleteSet(target.dbId).catch(() => undefined);
     }
   }
 
@@ -1105,7 +1075,6 @@ function WorkoutPageContent() {
       }
     }
     if (toRemove.length > 0) {
-      void queryClient.invalidateQueries({ queryKey: ["workouts"] });
     }
     return toRemove.length;
   }
@@ -1187,7 +1156,6 @@ function WorkoutPageContent() {
         [blockId]: { ...currentBlock, sets: [...currentBlock.sets, newSet] },
       });
 
-      queryClient.invalidateQueries({ queryKey: ["workouts"] });
       return true;
     } catch {
       toast.error("Could not log set");
@@ -1295,11 +1263,7 @@ function WorkoutPageContent() {
       if (nextRir !== (last.rir ?? null)) patch.rir = nextRir;
       if (nextFeel !== (last.feel ?? null)) patch.feel = nextFeel;
       if (Object.keys(patch).length > 0) {
-        updateSet(last.dbId, patch)
-          .catch(() => undefined)
-          .finally(() =>
-            queryClient.invalidateQueries({ queryKey: ["workouts"] }),
-          );
+        void updateSet(last.dbId, patch).catch(() => undefined);
       }
     }
     return true;
@@ -1482,7 +1446,6 @@ function WorkoutPageContent() {
         [blockId]: { ...blockAfter, sets: [...blockAfter.sets, ...newSets] },
       });
 
-      queryClient.invalidateQueries({ queryKey: ["workouts"] });
     } catch {
       toast.error("Could not log sets");
     }
@@ -1690,7 +1653,6 @@ function WorkoutPageContent() {
       }),
     );
 
-    queryClient.invalidateQueries({ queryKey: ["workouts"] });
     return changedCount;
   }
 

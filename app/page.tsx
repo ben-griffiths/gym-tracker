@@ -3,7 +3,8 @@
 import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
+import { useHistoryGroups } from "@/lib/sync/workouts-live";
 import { toast } from "sonner";
 import { ChevronRight, Dumbbell, Pencil, Trash2, X } from "lucide-react";
 import { StartWorkoutFab } from "@/components/home/start-workout-fab";
@@ -18,7 +19,6 @@ import {
   flattenSets,
   formatWorkoutTitle,
   groupByExercise,
-  type HistoryResponse,
 } from "@/lib/workout-history";
 import { AverageLiftLevelCard } from "@/components/strength/average-lift-level-card";
 import {
@@ -28,7 +28,6 @@ import {
 } from "@/lib/lift-profiles";
 
 export default function HomePage() {
-  const queryClient = useQueryClient();
   /** Session-only: hidden after dismiss until the next full page load. */
   const [maxesHintVisible, setMaxesHintVisible] = useState(true);
 
@@ -36,28 +35,10 @@ export default function HomePage() {
     setMaxesHintVisible(false);
   }
 
-  const historyQuery = useQuery<HistoryResponse>({
-    queryKey: ["workouts"],
-    queryFn: async () => {
-      const response = await fetch("/api/workouts");
-      if (!response.ok) {
-        let message = "Failed to load history";
-        try {
-          const body = (await response.json()) as { error?: string };
-          if (body.error) message = body.error;
-        } catch {}
-        throw new Error(message);
-      }
-      return response.json();
-    },
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const historyQuery = useHistoryGroups();
 
   const deleteMutation = useMutation({
     mutationFn: (sessionId: string) => deleteWorkoutSession(sessionId),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["workouts"] }),
     onError: () => toast.error("Could not delete workout"),
   });
 

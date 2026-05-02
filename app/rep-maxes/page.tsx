@@ -2,14 +2,14 @@
 
 import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Dumbbell } from "lucide-react";
 import {
   getExerciseByName,
   getExerciseBySlug,
   searchExercises,
 } from "@/lib/exercises";
-import { flattenSets, type HistoryResponse } from "@/lib/workout-history";
+import { flattenSets } from "@/lib/workout-history";
+import { useHistoryGroups } from "@/lib/sync/workouts-live";
 import { toKg } from "@/lib/lift-profiles";
 import { estimateOneRm, percentageOfOneRm } from "@/lib/rep-percentages";
 
@@ -37,23 +37,7 @@ type RepMaxRow = {
 };
 
 export default function RepMaxesPage() {
-  const historyQuery = useQuery<HistoryResponse>({
-    queryKey: ["workouts"],
-    queryFn: async () => {
-      const response = await fetch("/api/workouts");
-      if (!response.ok) {
-        let message = "Failed to load history";
-        try {
-          const body = (await response.json()) as { error?: string };
-          if (body.error) message = body.error;
-        } catch {}
-        throw new Error(message);
-      }
-      return response.json();
-    },
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const historyQuery = useHistoryGroups();
 
   const rows = useMemo<RepMaxRow[]>(() => {
     const sessions = (historyQuery.data?.groups ?? []).flatMap(

@@ -4,8 +4,8 @@
 // into Dexie + outbox and the sync engine flushes when online.
 //
 // Versioned cache name lets us bump and clear stale entries on deploy.
-const SHELL_CACHE = "liftlog-shell-v2";
-const RUNTIME_CACHE = "liftlog-runtime-v2";
+const SHELL_CACHE = "liftlog-shell-v3";
+const RUNTIME_CACHE = "liftlog-runtime-v3";
 const OFFLINE_FALLBACK = "/";
 
 self.addEventListener("install", (event) => {
@@ -40,8 +40,12 @@ function isStaticAsset(url) {
 function isSafeApiGet(request, url) {
   if (request.method !== "GET") return false;
   if (!url.pathname.startsWith("/api/")) return false;
-  // Sync + vision + webllm-log are dynamic; never cache them.
+  // Skip endpoints that would lie about state if cached:
+  //   - /api/workouts: reads now come from Dexie (lib/sync/workouts-live).
+  //     Caching the legacy fetch here would resurrect stale snapshots.
+  //   - /api/sync/*, /api/vision/*, /api/webllm-log, /api/chat: dynamic.
   return !(
+    url.pathname.startsWith("/api/workouts") ||
     url.pathname.startsWith("/api/sync/") ||
     url.pathname.startsWith("/api/vision/") ||
     url.pathname.startsWith("/api/webllm-log") ||

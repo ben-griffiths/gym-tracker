@@ -1,8 +1,9 @@
 "use client";
 
 import { ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useHistoryGroups } from "@/lib/sync/workouts-live";
 import { Clock, Trash2 } from "lucide-react";
 import {
   Sheet,
@@ -22,7 +23,6 @@ import {
   formatDate,
   formatWorkoutTitle,
   groupByExercise,
-  type HistoryResponse,
   type HistorySet,
 } from "@/lib/workout-history";
 
@@ -50,30 +50,10 @@ export function HistorySheet({
   currentSessionId,
   liveCurrent,
 }: HistorySheetProps) {
-  const queryClient = useQueryClient();
-  const historyQuery = useQuery<HistoryResponse>({
-    queryKey: ["workouts"],
-    queryFn: async () => {
-      const response = await fetch("/api/workouts");
-      if (!response.ok) {
-        let message = "Failed to load history";
-        try {
-          const body = (await response.json()) as { error?: string };
-          if (body.error) message = body.error;
-        } catch {}
-        throw new Error(message);
-      }
-      return response.json();
-    },
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const historyQuery = useHistoryGroups();
 
   const deleteMutation = useMutation({
     mutationFn: (sessionId: string) => deleteWorkoutSession(sessionId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["workouts"] });
-    },
     onError: () => toast.error("Could not delete workout"),
   });
 
