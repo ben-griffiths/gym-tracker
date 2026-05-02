@@ -305,26 +305,40 @@ async function softDelete<T extends "set_entries" | "workout_sessions">(
   const existing = (await store.get(id)) as
     | (SetEntryRow | WorkoutSessionRow)
     | undefined;
-  if (!existing) return null;
   const ts = nowIso();
-  const updated = {
-    ...existing,
-    deleted_at: ts,
-    updated_at: ts,
-    client_updated_at: ts,
-    local_updated_at: ts,
-    dirty: 1 as const,
-  };
-  await db.transaction("rw", [store, db.outbox], async () => {
-    await store.put(updated);
+
+  if (existing) {
+    const updated = {
+      ...existing,
+      deleted_at: ts,
+      updated_at: ts,
+      client_updated_at: ts,
+      local_updated_at: ts,
+      dirty: 1 as const,
+    };
+    await db.transaction("rw", [store, db.outbox], async () => {
+      await store.put(updated);
+      await enqueueMutation({
+        table,
+        op: "delete",
+        row_id: id,
+        client_updated_at: ts,
+        payload: serverShape(updated as Record<string, unknown>),
+      });
+    });
+  } else {
+    // Row was never pulled into Dexie (legacy data, fresh device, cleared
+    // IDB). Send a partial delete so the server still tombstones it.
+    const userId = await getCurrentUserId();
     await enqueueMutation({
       table,
       op: "delete",
       row_id: id,
       client_updated_at: ts,
-      payload: serverShape(updated as Record<string, unknown>),
+      payload: { id, user_id: userId, deleted_at: ts, client_updated_at: ts },
     });
-  });
+  }
+
   await flushOutboxOnce();
   return { id };
 }
