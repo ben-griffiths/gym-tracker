@@ -75,10 +75,15 @@ async function findOrCreateExercise(
     .equals(userId)
     .filter((row) => !row.deleted_at)
     .toArray();
-  const existing = all.find(
+  const matches = all.filter(
     (e) =>
       e.name.toLowerCase() === lower || e.aliases.some((a) => a.toLowerCase() === lower),
   );
+  // Prefer a server-confirmed row over a dirty local-only one — duplicates
+  // can exist briefly when an earlier push failed and a pull brought back
+  // the canonical server version.
+  const existing =
+    matches.find((m) => m.server_updated_at != null) ?? matches[0];
   if (existing) return existing;
 
   const ts = nowIso();
@@ -162,13 +167,17 @@ export async function createWorkoutSession(input: {
   const slug = slugifyGroupName(input.groupName);
   const ts = nowIso();
 
-  const existingGroup = await db.workout_groups
+  const slugMatches = await db.workout_groups
     .where("[user_id+slug]")
     .equals([userId, slug])
-    .first();
+    .toArray();
+  const existingGroup =
+    slugMatches.find((g) => g.server_updated_at != null && !g.deleted_at) ??
+    slugMatches.find((g) => !g.deleted_at) ??
+    null;
 
   let group: WorkoutGroupRow;
-  if (existingGroup && !existingGroup.deleted_at) {
+  if (existingGroup) {
     group = existingGroup;
   } else {
     group = {

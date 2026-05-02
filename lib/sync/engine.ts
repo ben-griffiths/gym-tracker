@@ -226,6 +226,49 @@ async function remapId(
   }
 }
 
+/**
+ * Detect a stale local row that shares this server row's unique key
+ * (slug for workout_groups, name for exercises) but has a different id.
+ * Such rows arise when an earlier push of the local row failed and a
+ * subsequent pull brought back the server's canonical version. Remap the
+ * stale id to the server id so dependent FKs (workout_sessions,
+ * session_exercises, outbox payloads) line up.
+ */
+async function reconcileUniqueKey(
+  table: SyncTable,
+  serverRow: ServerRow,
+): Promise<void> {
+  const db = getLocalDb();
+  if (table === "workout_groups") {
+    const slug = (serverRow as unknown as { slug?: string }).slug;
+    if (!slug) return;
+    const userId = (serverRow as unknown as { user_id: string }).user_id;
+    const dupes = await db.workout_groups
+      .where("[user_id+slug]")
+      .equals([userId, slug])
+      .toArray();
+    for (const d of dupes) {
+      if (d.id !== serverRow.id) {
+        await remapId("workout_groups", d.id, serverRow.id);
+      }
+    }
+  } else if (table === "exercises") {
+    const name = (serverRow as unknown as { name?: string }).name;
+    if (!name) return;
+    const userId = (serverRow as unknown as { user_id: string }).user_id;
+    const dupes = await db.exercises
+      .where("user_id")
+      .equals(userId)
+      .filter((e) => e.name.toLowerCase() === name.toLowerCase())
+      .toArray();
+    for (const d of dupes) {
+      if (d.id !== serverRow.id) {
+        await remapId("exercises", d.id, serverRow.id);
+      }
+    }
+  }
+}
+
 async function pullChanges(): Promise<void> {
   const db = getLocalDb();
   const meta = await db.sync_meta.get("default");
@@ -245,12 +288,15 @@ async function pullChanges(): Promise<void> {
 
     await db.transaction(
       "rw",
-      [db.workout_groups, db.workout_sessions, db.exercises, db.session_exercises, db.set_entries, db.sync_meta],
+      [db.workout_groups, db.workout_sessions, db.exercises, db.session_exercises, db.set_entries, db.sync_meta, db.outbox],
       async () => {
         for (const [table, rows] of Object.entries(parsed.rows) as Array<
           [SyncTable, ServerRow[]]
         >) {
           for (const row of rows) {
+            if (table === "workout_groups" || table === "exercises") {
+              await reconcileUniqueKey(table, row);
+            }
             await applyServerRow(table, row);
           }
         }
