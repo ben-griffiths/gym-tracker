@@ -4,8 +4,8 @@
 // into Dexie + outbox and the sync engine flushes when online.
 //
 // Versioned cache name lets us bump and clear stale entries on deploy.
-const SHELL_CACHE = "liftlog-shell-v1";
-const RUNTIME_CACHE = "liftlog-runtime-v1";
+const SHELL_CACHE = "liftlog-shell-v2";
+const RUNTIME_CACHE = "liftlog-runtime-v2";
 const OFFLINE_FALLBACK = "/";
 
 self.addEventListener("install", (event) => {
@@ -87,19 +87,25 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Safe API GETs: stale-while-revalidate.
+  // Safe API GETs: NETWORK-FIRST. Stale-while-revalidate would mean the UI
+  // sees the pre-mutation snapshot for one paint after every write — React
+  // Query's invalidation refetches once and accepts whatever the SW gives
+  // it, so a cached response wins. Hit the network when online, fall back
+  // to the last cached response only when offline.
   if (isSafeApiGet(request, url)) {
     event.respondWith(
-      caches.open(RUNTIME_CACHE).then(async (cache) => {
-        const cached = await cache.match(request);
-        const networkPromise = fetch(request)
-          .then((res) => {
-            if (res.ok) cache.put(request, res.clone());
-            return res;
-          })
-          .catch(() => cached);
-        return cached || networkPromise;
-      }),
+      (async () => {
+        const cache = await caches.open(RUNTIME_CACHE);
+        try {
+          const fresh = await fetch(request);
+          if (fresh.ok) cache.put(request, fresh.clone());
+          return fresh;
+        } catch (err) {
+          const cached = await cache.match(request);
+          if (cached) return cached;
+          throw err;
+        }
+      })(),
     );
   }
 });
