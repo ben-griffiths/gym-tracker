@@ -44,11 +44,15 @@ function slugifyGroupName(name: string): string {
 }
 
 async function getCurrentUserId(): Promise<string> {
+  // Use getSession() — purely local read of the cached token. Calling
+  // getUser() here hits the auth endpoint to revalidate, which hangs
+  // offline and blocks every mutation behind it.
   const { createClient } = await import("@/lib/supabase/client");
   const client = createClient();
-  const { data } = await client.auth.getUser();
-  if (!data.user) throw new Error("Please log in to continue.");
-  return data.user.id;
+  const { data } = await client.auth.getSession();
+  const userId = data.session?.user?.id;
+  if (!userId) throw new Error("Please log in to continue.");
+  return userId;
 }
 
 function serverShape<T extends Record<string, unknown>>(row: T): T {

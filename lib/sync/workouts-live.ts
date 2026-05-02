@@ -170,8 +170,10 @@ function useCurrentUserId(): string | null | undefined {
   useEffect(() => {
     let cancelled = false;
     const client = createBrowserSupabase();
-    client.auth.getUser().then(({ data }) => {
-      if (!cancelled) setUserId(data.user?.id ?? null);
+    // Local-only token read — getUser() would hit the auth server and hang
+    // offline, which would in turn stall every Dexie subscriber forever.
+    client.auth.getSession().then(({ data }) => {
+      if (!cancelled) setUserId(data.session?.user?.id ?? null);
     });
     const sub = client.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user?.id ?? null);
