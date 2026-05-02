@@ -386,11 +386,55 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     }, [runLoad]);
 
   /**
+   * Run `runLoad` and, on transient failure, automatically retry up to
+   * `MAX_AUTO_ATTEMPTS` total times with linear backoff. Returns true on
+   * success, false once retries are exhausted (or the load was superseded
+   * by a newer generation, e.g. unmount). Each user-initiated entry point
+   * (initial autoload, `retry`, `startModelLoad`) gets its own fresh budget.
+   */
+  const MAX_AUTO_ATTEMPTS = 3;
+  const runLoadWithAutoRetry = useCallback(async (): Promise<boolean> => {
+    for (let attempt = 1; attempt <= MAX_AUTO_ATTEMPTS; attempt++) {
+      loadGenRef.current += 1;
+      const gen = loadGenRef.current;
+      const ok = await runLoad(gen);
+      if (ok) return true;
+      // Superseded by a newer load (unmount or another retry kicked in).
+      if (gen !== loadGenRef.current) return false;
+      if (attempt < MAX_AUTO_ATTEMPTS) {
+        webllmLog(
+          `autoload: attempt ${attempt}/${MAX_AUTO_ATTEMPTS} failed — auto-retrying`,
+          { attempt },
+          { force: true },
+        );
+        // Brief linear backoff (1.5s, 3s) so a transient WebGPU/network blip
+        // has time to settle without making the user wait forever.
+        await new Promise<void>((r) => setTimeout(r, 1500 * attempt));
+        if (gen !== loadGenRef.current) return false;
+        // The previous failed attempt set status="error"; flip back to
+        // "loading" so the install overlay stays visible across retries.
+        setTrackedStatus("loading");
+        setErrorMessage(null);
+        setErrorDetail(null);
+        allowAutoloadAgain();
+      } else {
+        webllmLog(
+          `autoload: gave up after ${MAX_AUTO_ATTEMPTS} failed attempts`,
+          {},
+          { force: true },
+        );
+      }
+    }
+    return false;
+  }, [runLoad, setTrackedStatus]);
+
+  /**
    * Eager autoload on first paint so the user never has to tap a "Load model"
-   * button. We only kick this off from `idle` — `unsupported`, `error`,
+   * button. We only kick this off from `idle` — `unsupported`,
    * `requires_pwa_install`, and the crash-recovery skip path are all left
-   * alone. The full-screen "Installing AI…" overlay is rendered while
-   * `status === "loading"`.
+   * alone. The full-screen overlay is rendered while `status === "loading"`
+   * and again on `status === "error"` (with a Retry button) once the
+   * 3-attempt auto-retry budget is exhausted.
    */
   useEffect(() => {
     if (typeof window === "undefined" || !clientReady) return;
@@ -399,9 +443,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     if (isAutoloadSkipped()) return;
 
     webllmLog("autoload: starting eager load on app first paint");
-    loadGenRef.current += 1;
-    const gen = loadGenRef.current;
-    void runLoad(gen);
+    void runLoadWithAutoRetry();
 
     return () => {
       loadGenRef.current += 1;
@@ -409,7 +451,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       engineRef.current = null;
       void e?.unload().catch(() => {});
     };
-  }, [clientReady, runLoad]);
+  }, [clientReady, runLoadWithAutoRetry]);
 
   const startModelLoad = useCallback(() => {
     if (status !== "awaiting_tap" && status !== "idle") return;
@@ -420,19 +462,15 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     );
     allowAutoloadAgain();
     setErrorMessage(null);
-    loadGenRef.current += 1;
-    const gen = loadGenRef.current;
-    void runLoad(gen);
-  }, [runLoad, status]);
+    void runLoadWithAutoRetry();
+  }, [runLoadWithAutoRetry, status]);
 
   const retry = useCallback(() => {
     webllmLog("retry: user requested reload");
     allowAutoloadAgain();
     setErrorMessage(null);
-    loadGenRef.current += 1;
-    const gen = loadGenRef.current;
-    void runLoad(gen);
-  }, [runLoad]);
+    void runLoadWithAutoRetry();
+  }, [runLoadWithAutoRetry]);
 
   const getEngine = useCallback((): MLCEngineInterface | null => {
     return engineRef.current;
