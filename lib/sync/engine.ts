@@ -70,6 +70,8 @@ let pendingKick = false;
 export async function flushOutboxOnce(): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return;
   try {
+    // Pull first so unique-key remaps land before we try to push.
+    await pullChanges();
     await drainOutbox();
     const pending = await getLocalDb().outbox.count();
     emit({ pendingMutations: pending });
@@ -104,8 +106,11 @@ async function runOnce(): Promise<void> {
   }
   emit({ status: "syncing", lastError: null });
   try {
-    await drainOutbox();
+    // Pull first: it's read-only, can't fail mid-state, and may rewrite
+    // outbox payloads (id remap on slug/name conflict) so the subsequent
+    // push doesn't 403/409 on stale FKs.
     await pullChanges();
+    await drainOutbox();
     const pending = await getLocalDb().outbox.count();
     emit({
       status: "idle",
@@ -269,6 +274,55 @@ async function reconcileUniqueKey(
   }
 }
 
+/**
+ * Walk Dexie for workout_groups / exercises that share a unique key
+ * (slug / case-insensitive name). When multiple rows match, pick the
+ * server-confirmed one (server_updated_at != null) as canonical and
+ * remap the rest. Runs once on engine start to repair state left over
+ * from earlier failed-push flows that pre-dated reconcileUniqueKey.
+ */
+export async function dedupeLocal(): Promise<void> {
+  const db = getLocalDb();
+
+  const groups = await db.workout_groups.toArray();
+  const groupsBySlug = new Map<string, typeof groups>();
+  for (const g of groups) {
+    const key = `${g.user_id} ${g.slug}`;
+    const list = groupsBySlug.get(key) ?? [];
+    list.push(g);
+    groupsBySlug.set(key, list);
+  }
+  for (const dupes of groupsBySlug.values()) {
+    if (dupes.length < 2) continue;
+    const canonical =
+      dupes.find((d) => d.server_updated_at != null) ?? dupes[0];
+    for (const d of dupes) {
+      if (d.id !== canonical.id) {
+        await remapId("workout_groups", d.id, canonical.id);
+      }
+    }
+  }
+
+  const exercises = await db.exercises.toArray();
+  const byName = new Map<string, typeof exercises>();
+  for (const e of exercises) {
+    const key = `${e.user_id} ${e.name.toLowerCase()}`;
+    const list = byName.get(key) ?? [];
+    list.push(e);
+    byName.set(key, list);
+  }
+  for (const dupes of byName.values()) {
+    if (dupes.length < 2) continue;
+    const canonical =
+      dupes.find((d) => d.server_updated_at != null) ?? dupes[0];
+    for (const d of dupes) {
+      if (d.id !== canonical.id) {
+        await remapId("exercises", d.id, canonical.id);
+      }
+    }
+  }
+}
+
 async function pullChanges(): Promise<void> {
   const db = getLocalDb();
   const meta = await db.sync_meta.get("default");
@@ -348,7 +402,17 @@ export function startSyncEngine(): void {
     if (document.visibilityState === "visible") kickSync();
   });
   timerId = setInterval(() => kickSync(), PERIODIC_MS);
-  kickSync();
+
+  // One-time sweep at boot to repair duplicate-key rows left over from
+  // failed-push flows. Then run the normal pull/push cycle.
+  void (async () => {
+    try {
+      await dedupeLocal();
+    } catch (err) {
+      console.warn("dedupeLocal failed", err);
+    }
+    void kickSync();
+  })();
 }
 
 export function stopSyncEngine(): void {
