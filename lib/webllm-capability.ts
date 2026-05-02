@@ -38,22 +38,26 @@ export function isStandalonePWA(): boolean {
 }
 
 /**
- * iOS Safari outside an installed PWA caps Cache API at ~1.3–1.5 GB and silently
- * tab-kills WebLLM around shard 36/106 (~33%) of the 7B q4f16 model. Installed
- * PWAs get persistent storage, lifting the quota. Gating the load behind PWA
- * install on iOS is the only way to make WebLLM finish on iPhone.
+ * The pinned model is now `Llama-3.2-1B-Instruct-q4f16_1-MLC` (~700 MB), which fits
+ * comfortably inside iOS Safari's per-origin Cache API ceiling (~1.3–1.5 GB), so the
+ * historic PWA-install gate is no longer required for the model to finish loading.
+ *
+ * Kept as a function (returning `false`) so callers and the UI branch keyed on
+ * `"requires_pwa_install"` stay structurally intact; revisit if the pinned model
+ * grows past the iOS Safari quota again.
  */
 export function requiresIOSPWAInstallForWebLLM(): boolean {
-  return isIOS() && !isStandalonePWA();
+  return false;
 }
 
 const MOBILE_UA_RE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 
 /**
- * Phones / tablets and constrained networks need a smaller model and less KV
- * cache — loading the default 8B Hermes on mobile WebGPU often hits GPU OOM
- * right after the download/cache step finishes.
+ * Phones / tablets and constrained networks still benefit from a tighter KV
+ * cache: even with the 1B Llama checkpoint, low-end mobile GPUs can hit OOM
+ * if the context window is left at the default. Used to gate the production
+ * `context_window_size` override in `resolveWebLLMChatOptions()`.
  */
 export function prefersLowResourceWebLLM(): boolean {
   if (typeof navigator === "undefined") return false;

@@ -2909,9 +2909,9 @@ function WorkoutPageContent() {
                 Install LiftLog to enable on-device AI
               </p>
               <p className="mt-1 text-center">
-                iOS Safari limits cached model size to ~1.3 GB outside an
-                installed app, so the 4 GB model can&apos;t finish loading.
-                Adding LiftLog to your Home Screen lifts that limit.
+                iOS Safari throttles cached model storage outside an installed
+                app. Adding LiftLog to your Home Screen unlocks persistent
+                storage so the on-device model is cached across sessions.
               </p>
               <ol className="mx-auto mt-2 flex max-w-xs list-decimal flex-col gap-0.5 pl-5 text-left">
                 <li>

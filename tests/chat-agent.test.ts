@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   assembleSuggestion,
   buildSystemPrompt,
+  buildWebLLMToolProtocolPrompt,
   extractToolCalls,
   extractToolCallsFromChatCompletion,
+  extractToolCallsFromContent,
   getChatCompletionsTools,
 } from "../lib/chat-agent";
 import { parseFallbackSuggestion } from "../lib/workout-parser";
@@ -414,5 +416,109 @@ describe("extractToolCallsFromChatCompletion", () => {
     expect(
       extractToolCallsFromChatCompletion({ choices: [{ message: { content: "x" } }] }),
     ).toEqual([]);
+  });
+});
+
+describe("extractToolCallsFromContent (manual JSON tool-call protocol)", () => {
+  it("parses a bare JSON object with tool_calls (legacy wrapper)", () => {
+    const content = JSON.stringify({
+      tool_calls: [
+        { name: "log_sets", arguments: { exerciseSlug: "bench-press", sets: [] } },
+        { name: "reply", arguments: { text: "ok" } },
+      ],
+    });
+    const calls = extractToolCallsFromContent(content);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.name).toBe("log_sets");
+    expect(JSON.parse(calls[0]!.arguments)).toEqual({
+      exerciseSlug: "bench-press",
+      sets: [],
+    });
+    expect(JSON.parse(calls[1]!.arguments)).toEqual({ text: "ok" });
+  });
+
+  it("parses Meta's bare {name,parameters} shape", () => {
+    const content = JSON.stringify({
+      name: "reply",
+      parameters: { text: "hi" },
+    });
+    const calls = extractToolCallsFromContent(content);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("reply");
+    expect(JSON.parse(calls[0]!.arguments)).toEqual({ text: "hi" });
+  });
+
+  it("parses a bare array of {name,parameters} (multi-call extension)", () => {
+    const content = JSON.stringify([
+      {
+        name: "log_sets",
+        parameters: { exerciseSlug: "bench-press", sets: [] },
+      },
+      { name: "autofill_weights", parameters: { targetRpe: 8 } },
+    ]);
+    const calls = extractToolCallsFromContent(content);
+    expect(calls).toHaveLength(2);
+    expect(calls.map((c) => c.name)).toEqual(["log_sets", "autofill_weights"]);
+    expect(JSON.parse(calls[1]!.arguments)).toEqual({ targetRpe: 8 });
+  });
+
+  it("treats `parameters` as an alias for `arguments`", () => {
+    const content = JSON.stringify({
+      tool_calls: [
+        { name: "reply", parameters: { text: "yo" } },
+      ],
+    });
+    const calls = extractToolCallsFromContent(content);
+    expect(JSON.parse(calls[0]!.arguments)).toEqual({ text: "yo" });
+  });
+
+  it("parses Meta's <function=NAME>{json}</function> tag form", () => {
+    const content =
+      '<function=remove_block>{"exerciseSlug":"deadlift"}</function>';
+    const calls = extractToolCallsFromContent(content);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("remove_block");
+    expect(JSON.parse(calls[0]!.arguments)).toEqual({
+      exerciseSlug: "deadlift",
+    });
+  });
+
+  it("strips ```json fences", () => {
+    const content =
+      'Sure!\n```json\n{"name":"reply","parameters":{"text":"hi"}}\n```';
+    const calls = extractToolCallsFromContent(content);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("reply");
+  });
+
+  it("accepts string-form arguments", () => {
+    const content = JSON.stringify({
+      tool_calls: [
+        { name: "reply", arguments: '{"text":"hi"}' },
+      ],
+    });
+    const calls = extractToolCallsFromContent(content);
+    expect(JSON.parse(calls[0]!.arguments)).toEqual({ text: "hi" });
+  });
+
+  it("returns [] for non-JSON or empty content", () => {
+    expect(extractToolCallsFromContent("")).toEqual([]);
+    expect(extractToolCallsFromContent("just prose, no JSON")).toEqual([]);
+  });
+});
+
+describe("buildWebLLMToolProtocolPrompt", () => {
+  it("includes Meta's documented JSON tool-call instruction and inlines the tool catalog", () => {
+    const prompt = buildWebLLMToolProtocolPrompt();
+    // Meta's literal preamble phrasing.
+    expect(prompt).toMatch(/respond with a JSON for a function call/i);
+    expect(prompt).toContain('"name"');
+    expect(prompt).toContain('"parameters"');
+    // Tool catalog inlined as JSON (each declared tool name appears).
+    for (const t of getChatCompletionsTools()) {
+      expect(prompt).toContain(`"name": "${t.function.name}"`);
+    }
+    // Documents the multi-call array extension.
+    expect(prompt).toMatch(/array/i);
   });
 });

@@ -355,8 +355,8 @@ export function buildSystemPrompt(): string {
   return [
     "You are Lift, an AI coach inside a mobile-first chat gym tracker.",
     "For every message, decide first: is it (A) about logging or editing work in the gym, or naming/help with an exercise, or (B) only chit‑chat (greeting, thanks, small talk) with no lift, weight, or rep to log?",
-    "For (A): respond with tool calls only — do NOT return raw JSON. Call whichever tools fit, in the right order, one call per distinct action.",
-    "For (B): you MUST call the `reply` tool with a short friendly line — do NOT call `log_sets`, `update_sets`, or other workout tools. That still counts as using tools correctly.",
+    "For (A): emit one tool call per distinct action, in the order they should apply. Use the exact output shape the runtime expects (the wire format is described separately for each runtime).",
+    "For (B): call the `reply` tool with a short friendly line — do NOT call `log_sets`, `update_sets`, or other workout tools.",
     "",
     "Rules:",
     "- Every exercise you reference must come from the catalog below. If the user's word doesn't match a catalog slug, resolve it via the most common abbreviation (bench⇒bench-press, OHP/overhead press⇒shoulder-press, dead/deads⇒deadlift, squat⇒squat).",
@@ -803,6 +803,178 @@ export function extractToolCalls(completion: unknown): ToolCall[] {
     calls.push({ name: typed.name, arguments: args });
   }
   return calls;
+}
+
+/**
+ * Extract tool calls from a free-form assistant message content string.
+ *
+ * Used on the WebLLM path with models that are NOT in MLC's
+ * `functionCallingModelIds` (e.g. Llama-3.2-1B). The pinned Llama-3.2-1B
+ * is prompted with Meta's documented zero-shot JSON tool-calling format
+ * (`{"name":"…","parameters":{…}}`); we accept either a single such object
+ * or an array of them, plus a handful of legacy / alternate shapes.
+ *
+ * Recognised payloads:
+ *   - bare object  : {"name":"…","parameters":{…}}                  (Meta JSON)
+ *   - bare array   : [{"name":"…","parameters":{…}}, …]             (multi-call extension)
+ *   - wrapper      : {"tool_calls":[{"name":"…","arguments":{…}}]}  (legacy ad-hoc)
+ *   - OpenAI shape : [{"function":{"name":"…","arguments":"{…}"}}]
+ *   - Llama tag    : <function=NAME>{json}</function>               (Meta alternate)
+ *
+ * Each shape may be wrapped in ```json … ``` fences or surrounded by prose;
+ * we extract the first plausible JSON blob (or function-tag) and try each.
+ */
+export function extractToolCallsFromContent(content: string): ToolCall[] {
+  if (!content) return [];
+
+  // Llama 3.1/3.2 alternate "custom tag" form: <function=NAME>{json}</function>
+  const tagged = readToolCallsFromFunctionTags(content);
+  if (tagged.length > 0) return tagged;
+
+  const candidates: string[] = [];
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced && fenced[1]) candidates.push(fenced[1].trim());
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    candidates.push(trimmed);
+  }
+  const firstBracket = firstJsonBracketIndex(content);
+  if (firstBracket >= 0) {
+    const closer = content.lastIndexOf(content[firstBracket] === "{" ? "}" : "]");
+    if (closer > firstBracket) {
+      candidates.push(content.slice(firstBracket, closer + 1));
+    }
+  }
+
+  for (const text of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    const calls = readToolCallsFromParsed(parsed);
+    if (calls.length > 0) return calls;
+  }
+  return [];
+}
+
+function firstJsonBracketIndex(content: string): number {
+  const o = content.indexOf("{");
+  const a = content.indexOf("[");
+  if (o < 0) return a;
+  if (a < 0) return o;
+  return Math.min(o, a);
+}
+
+function readToolCallsFromFunctionTags(content: string): ToolCall[] {
+  const re = /<function=([A-Za-z0-9_]+)>([\s\S]*?)<\/function>/g;
+  const out: ToolCall[] = [];
+  for (const m of content.matchAll(re)) {
+    const name = m[1];
+    const body = (m[2] ?? "").trim() || "{}";
+    if (!name) continue;
+    // Validate the body parses as JSON; if not, skip.
+    try {
+      JSON.parse(body);
+    } catch {
+      continue;
+    }
+    out.push({ name, arguments: body });
+  }
+  return out;
+}
+
+function readToolCallsFromParsed(parsed: unknown): ToolCall[] {
+  if (!parsed || typeof parsed !== "object") return [];
+  // Accepted top-level shapes:
+  //   - array of call entries
+  //   - { tool_calls: [...] }   (legacy ad-hoc wrapper)
+  //   - bare call entry { name, parameters | arguments }
+  const list: unknown[] = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray((parsed as { tool_calls?: unknown }).tool_calls)
+      ? ((parsed as { tool_calls: unknown[] }).tool_calls)
+      : (parsed as { name?: unknown }).name ||
+          (parsed as { function?: { name?: unknown } }).function?.name
+        ? [parsed]
+        : [];
+  const out: ToolCall[] = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as {
+      name?: unknown;
+      function?: { name?: unknown; arguments?: unknown; parameters?: unknown };
+      arguments?: unknown;
+      parameters?: unknown;
+    };
+    const name =
+      typeof e.name === "string"
+        ? e.name
+        : typeof e.function?.name === "string"
+          ? e.function.name
+          : null;
+    if (!name) continue;
+    // Meta's zero-shot JSON format uses `parameters`; OpenAI / our older
+    // wrapper uses `arguments`. Accept either (prefer the populated one).
+    const rawArgs =
+      e.parameters ??
+      e.arguments ??
+      e.function?.parameters ??
+      e.function?.arguments ??
+      {};
+    const args =
+      typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs ?? {});
+    out.push({ name, arguments: args });
+  }
+  return out;
+}
+
+/**
+ * System-prompt addendum describing the manual tool-calling protocol used on
+ * the WebLLM path with Llama-3.2 lightweight models (which are not in MLC's
+ * `functionCallingModelIds` and so cannot use native `tools`/`tool_choice`).
+ *
+ * Mirrors Meta's documented zero-shot JSON tool-calling format for Llama 3.1 /
+ * 3.2 lightweight models — see https://www.llama.com/docs/model-cards-and-prompt-formats/llama3_2/
+ * and the linked Llama 3.1 zero-shot tool spec — with one explicit extension:
+ * a JSON array of call objects is allowed for multi-tool turns. Pair with
+ * `buildSystemPrompt()` (the latter carries domain rules + the exercise catalog).
+ */
+export function buildWebLLMToolProtocolPrompt(): string {
+  const tools = CHAT_TOOLS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+  }));
+  const toolsJson = JSON.stringify(tools, null, 2);
+  return [
+    // Meta's literal zero-shot preamble (verbatim modulo our multi-call note).
+    "You have access to the following functions:",
+    "",
+    toolsJson,
+    "",
+    "Given the user's message, respond with a JSON for a function call with",
+    'its proper arguments that best answers the request. Respond in the format',
+    '{"name": <function name>, "parameters": <dictionary of argument name and value>}.',
+    "Do not use variables. Do not include any other text in the response.",
+    "",
+    "If multiple distinct actions are needed in a single turn (e.g. logging",
+    "several exercises, or `log_sets` plus `autofill_weights`), emit a JSON",
+    'array of such objects: [{"name": …, "parameters": …}, …]. Otherwise emit',
+    "a single object. Output JSON ONLY — no prose, no code fences, no",
+    "<function=…> tags.",
+    "",
+    "Examples:",
+    'User: "hi"',
+    'Assistant: {"name":"reply","parameters":{"text":"Hey! What are we training today?"}}',
+    "",
+    'User: "bench 5x5, you pick the weight"',
+    "Assistant: [",
+    '  {"name":"log_sets","parameters":{"exerciseSlug":"bench-press","sets":[{"reps":5,"weight":null,"weightUnit":"kg"},{"reps":5,"weight":null,"weightUnit":"kg"},{"reps":5,"weight":null,"weightUnit":"kg"},{"reps":5,"weight":null,"weightUnit":"kg"},{"reps":5,"weight":null,"weightUnit":"kg"}]}},',
+    '  {"name":"autofill_weights","parameters":{"targetRpe":8}}',
+    "]",
+  ].join("\n");
 }
 
 /**

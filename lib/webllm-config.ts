@@ -2,14 +2,14 @@ import type { ChatOptions } from "@mlc-ai/web-llm";
 import { prefersLowResourceWebLLM } from "@/lib/webllm-capability";
 
 /**
- * Single global WebLLM checkpoint. Pinned to **`Hermes-2-Pro-Mistral-7B-q4f16_1-MLC`** —
- * the smallest model in `@mlc-ai/web-llm`'s `functionCallingModelIds` set for this package
- * version, so `chat.completions.create` with `tools` (see `lib/chat-agent.ts`) keeps working.
- * **Product policy:** The same Hermes 7B ID ships on **desktop and mobile**. Dropping to a smaller
- * prebuilt requires either giving up **`tools`/function calling** until MLC lists that model ID, or a
- * second code path—not enabled here.
+ * Single global WebLLM checkpoint. Pinned to **`Llama-3.2-1B-Instruct-q4f16_1-MLC`** —
+ * a compact (~700 MB) prebuilt that's listed in `@mlc-ai/web-llm`'s `prebuiltAppConfig` for
+ * the pinned package version. It is **not** in MLC's `functionCallingModelIds`, so
+ * `chat.completions.create({ tools, tool_choice })` cannot be used; tool calls are emitted
+ * via a manual JSON-output protocol — see `runChatAgentWebLLM` in `lib/workout-chat-webllm.ts`.
+ * Same checkpoint on desktop and mobile.
  */
-export const WEBLLM_MODEL_ID = "Hermes-2-Pro-Mistral-7B-q4f16_1-MLC";
+export const WEBLLM_MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
 
 /** @deprecated use WEBLLM_MODEL_ID / resolveWebLLMModelId */
 export const DEFAULT_WEBLLM_MODEL_ID_MOBILE = WEBLLM_MODEL_ID;
