@@ -1,0 +1,276 @@
+/**
+ * Sync orchestrator. Drains the outbox to /api/sync/push, then pulls fresh
+ * rows from /api/sync/pull and merges them into Dexie. Triggered on:
+ *   - first mount
+ *   - `online` event
+ *   - `visibilitychange` to visible
+ *   - manual `kick()` after every local mutation
+ *   - 30 s timer while the tab is open
+ */
+
+import { mergeRow } from "./mergers";
+import {
+  pullResponseSchema,
+  pushResponseSchema,
+  ROW_SCHEMAS,
+} from "./schemas";
+import { getLocalDb, nowIso } from "./db";
+import type {
+  OutboxEntry,
+  ServerRow,
+  SyncRow,
+  SyncTable,
+} from "./types";
+
+const PULL_LIMIT = 500;
+const PERIODIC_MS = 30_000;
+
+type Listener = (state: SyncState) => void;
+
+export type SyncState = {
+  status: "idle" | "syncing" | "error" | "offline";
+  pendingMutations: number;
+  lastError: string | null;
+  lastSyncedAt: string | null;
+};
+
+let state: SyncState = {
+  status: "idle",
+  pendingMutations: 0,
+  lastError: null,
+  lastSyncedAt: null,
+};
+const listeners = new Set<Listener>();
+
+function emit(next: Partial<SyncState>) {
+  state = { ...state, ...next };
+  for (const l of listeners) l(state);
+}
+
+export function getSyncState(): SyncState {
+  return state;
+}
+
+export function subscribeSync(listener: Listener): () => void {
+  listeners.add(listener);
+  listener(state);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+let inflight: Promise<void> | null = null;
+let pendingKick = false;
+
+export function kickSync(): Promise<void> {
+  if (inflight) {
+    pendingKick = true;
+    return inflight;
+  }
+  inflight = (async () => {
+    try {
+      do {
+        pendingKick = false;
+        await runOnce();
+      } while (pendingKick);
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}
+
+async function runOnce(): Promise<void> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    emit({ status: "offline" });
+    return;
+  }
+  emit({ status: "syncing", lastError: null });
+  try {
+    await drainOutbox();
+    await pullChanges();
+    const pending = await getLocalDb().outbox.count();
+    emit({
+      status: "idle",
+      pendingMutations: pending,
+      lastSyncedAt: nowIso(),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    emit({ status: "error", lastError: message });
+  }
+}
+
+async function drainOutbox(): Promise<void> {
+  const db = getLocalDb();
+  while (true) {
+    const batch = await db.outbox.orderBy("queued_at").limit(50).toArray();
+    if (batch.length === 0) return;
+
+    const response = await fetch("/api/sync/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mutations: batch.map((m) => ({
+          table: m.table,
+          op: m.op,
+          row_id: m.row_id,
+          client_updated_at: m.client_updated_at,
+          payload: m.payload,
+        })),
+      }),
+    });
+
+    if (response.status === 401) {
+      throw new Error("Not signed in");
+    }
+    if (!response.ok) {
+      throw new Error(`Push failed: ${response.status}`);
+    }
+    const json = await response.json();
+    const parsed = pushResponseSchema.parse(json);
+
+    await db.transaction(
+      "rw",
+      [db.outbox, db.workout_groups, db.workout_sessions, db.exercises, db.session_exercises, db.set_entries],
+      async () => {
+        const ids = batch.map((m) => m.id!).filter((id): id is number => id != null);
+        await db.outbox.bulkDelete(ids);
+
+        for (const r of parsed.results) {
+          await applyServerRow(r.table, r.server_row as ServerRow);
+        }
+      },
+    );
+  }
+}
+
+async function pullChanges(): Promise<void> {
+  const db = getLocalDb();
+  const meta = await db.sync_meta.get("default");
+  let cursor = meta?.cursor ?? null;
+
+  while (true) {
+    const url = new URL("/api/sync/pull", window.location.origin);
+    if (cursor) url.searchParams.set("since", cursor);
+    url.searchParams.set("limit", String(PULL_LIMIT));
+
+    const response = await fetch(url.toString(), { method: "GET" });
+    if (response.status === 401) throw new Error("Not signed in");
+    if (!response.ok) throw new Error(`Pull failed: ${response.status}`);
+
+    const json = await response.json();
+    const parsed = pullResponseSchema.parse(json);
+
+    await db.transaction(
+      "rw",
+      [db.workout_groups, db.workout_sessions, db.exercises, db.session_exercises, db.set_entries, db.sync_meta],
+      async () => {
+        for (const [table, rows] of Object.entries(parsed.rows) as Array<
+          [SyncTable, ServerRow[]]
+        >) {
+          for (const row of rows) {
+            await applyServerRow(table, row);
+          }
+        }
+        await db.sync_meta.put({
+          id: "default",
+          cursor: parsed.next_cursor ?? cursor,
+          last_pull_at: nowIso(),
+        });
+      },
+    );
+
+    cursor = parsed.next_cursor ?? cursor;
+    if (!parsed.has_more) return;
+  }
+}
+
+async function applyServerRow(
+  table: SyncTable,
+  serverRow: ServerRow,
+): Promise<void> {
+  const db = getLocalDb();
+  const store = db.table(table) as unknown as {
+    get(id: string): Promise<SyncRow | undefined>;
+    put(row: SyncRow): Promise<unknown>;
+  };
+  const local = await store.get(serverRow.id);
+  const merged = mergeRow(table, local, serverRow);
+  const localDirty = local?.dirty === 1 ? local : null;
+  const serverWon = !localDirty || JSON.stringify(merged) === JSON.stringify(serverRow);
+  const next: SyncRow = {
+    ...merged,
+    server_updated_at: serverRow.updated_at,
+    local_updated_at: localDirty ? local!.local_updated_at : serverRow.updated_at,
+    dirty: serverWon ? 0 : 1,
+  } as SyncRow;
+  await store.put(next);
+}
+
+let started = false;
+let timerId: ReturnType<typeof setInterval> | null = null;
+
+export function startSyncEngine(): void {
+  if (started || typeof window === "undefined") return;
+  started = true;
+
+  window.addEventListener("online", () => kickSync());
+  window.addEventListener("focus", () => kickSync());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") kickSync();
+  });
+  timerId = setInterval(() => kickSync(), PERIODIC_MS);
+  kickSync();
+}
+
+export function stopSyncEngine(): void {
+  if (timerId != null) {
+    clearInterval(timerId);
+    timerId = null;
+  }
+  started = false;
+}
+
+/**
+ * Append an outbox mutation. Callers should already have updated the local
+ * row in the same transaction; pass that transaction in via `runInTx` so the
+ * write is atomic with the row update. If `runInTx` is omitted we open our
+ * own short transaction.
+ */
+export async function enqueueMutation(entry: Omit<OutboxEntry, "id" | "attempts" | "queued_at">): Promise<void> {
+  const db = getLocalDb();
+  await db.outbox.add({
+    ...entry,
+    attempts: 0,
+    queued_at: nowIso(),
+  });
+  const pending = await db.outbox.count();
+  emit({ pendingMutations: pending });
+}
+
+/** Test-only: reset module state. */
+export function __resetEngineForTests() {
+  state = {
+    status: "idle",
+    pendingMutations: 0,
+    lastError: null,
+    lastSyncedAt: null,
+  };
+  listeners.clear();
+  inflight = null;
+  pendingKick = false;
+  started = false;
+  if (timerId != null) {
+    clearInterval(timerId);
+    timerId = null;
+  }
+}
+
+// Expose for tests / debugging.
+export const _internal = {
+  applyServerRow,
+  drainOutbox,
+  pullChanges,
+  ROW_SCHEMAS,
+};
