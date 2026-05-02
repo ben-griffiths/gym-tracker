@@ -4,13 +4,26 @@
 // into Dexie + outbox and the sync engine flushes when online.
 //
 // Versioned cache name lets us bump and clear stale entries on deploy.
-const SHELL_CACHE = "liftlog-shell-v3";
-const RUNTIME_CACHE = "liftlog-runtime-v3";
+const SHELL_CACHE = "liftlog-shell-v4";
+const RUNTIME_CACHE = "liftlog-runtime-v4";
 const OFFLINE_FALLBACK = "/";
+
+// Precache every top-level navigation. Without this, visiting /strength or
+// /rep-maxes for the first time offline falls back to OFFLINE_FALLBACK and
+// the user lands on the home page instead of the route they wanted.
+const PRECACHE_NAV_ROUTES = ["/", "/workout", "/strength", "/rep-maxes"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll([OFFLINE_FALLBACK])),
+    caches.open(SHELL_CACHE).then(async (cache) => {
+      // Use individual addAll so a single 404 / network blip doesn't fail
+      // the whole install — fall through to the runtime cache-on-visit path.
+      await Promise.all(
+        PRECACHE_NAV_ROUTES.map((url) =>
+          cache.add(url).catch(() => undefined),
+        ),
+      );
+    }),
   );
   self.skipWaiting();
 });
