@@ -63,6 +63,18 @@ export function isLikelyMobileWebLLMClient(): boolean {
 }
 
 /**
+ * Phones/tablets in an installed standalone PWA: skip eager WebLLM autoload on cold start
+ * so force-quit → reopen does not immediately pull model/worker again. Load still runs on
+ * explicit UI (e.g. "Load model now"), retry after error, or the first chat message
+ * (`ensureEngineForChat` on the workout page).
+ *
+ * Desktop installed PWAs and in-browser tabs keep eager autoload (smaller blast radius).
+ */
+export function shouldDeferWebllmAutoloadUntilUserIntent(): boolean {
+  return isStandalonePWA() && isLikelyMobileWebLLMClient();
+}
+
+/**
  * Phones / tablets and constrained networks still benefit from a tighter KV
  * cache: even with the 1B Llama checkpoint, low-end mobile GPUs can hit OOM
  * if the context window is left at the default. Used to gate the production

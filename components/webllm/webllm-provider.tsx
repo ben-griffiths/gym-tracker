@@ -17,6 +17,7 @@ import {
   isLikelyMobileWebLLMClient,
   prefersLowResourceWebLLM,
   requiresIOSPWAInstallForWebLLM,
+  shouldDeferWebllmAutoloadUntilUserIntent,
 } from "@/lib/webllm/capability";
 import {
   resolveWebLLMChatOptions,
@@ -515,7 +516,11 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
 
   /**
    * Eager autoload on first paint so the user never has to tap a "Load model"
-   * button. We only kick this off from `idle` — `unsupported`,
+   * button on most clients. Standalone mobile PWAs skip this so a force-quit
+   * cold start does not immediately re-fetch/compile the model; those users
+   * use chat, "Load model now", or retry instead.
+   *
+   * We only kick this off from `idle` — `unsupported`,
    * `requires_pwa_install`, and the crash-recovery skip path are all left
    * alone. The full-screen overlay is rendered while `status === "loading"`
    * and again on `status === "error"` (with a Retry button) once the
@@ -526,6 +531,14 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     if (!isWebGPUSupported()) return;
     if (statusRef.current !== "idle") return;
     if (isAutoloadSkipped()) return;
+    if (shouldDeferWebllmAutoloadUntilUserIntent()) {
+      webllmLog(
+        "autoload: skipped (standalone mobile PWA — wait for user intent)",
+        {},
+        { force: true },
+      );
+      return;
+    }
 
     webllmLog("autoload: starting eager load on app first paint");
     void runLoadWithAutoRetry();
