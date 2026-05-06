@@ -73,9 +73,21 @@ export async function updateSession(request: NextRequest) {
     return withPlaywrightBypassCookie(response);
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getUser() validates JWT with Supabase Auth and fails when offline. Fall
+  // back to cookie-backed getSession() so local-first flows keep working with a
+  // non-expired access token (refresh still needs network once expired).
+  let user = null;
+  try {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  } catch {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    user = session?.user ?? null;
+  }
 
   if (!user && !isAuthRoute && !isApiRoute) {
     const url = request.nextUrl.clone();
