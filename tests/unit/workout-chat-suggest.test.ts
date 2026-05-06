@@ -84,6 +84,88 @@ describe("workoutChatSuggest", () => {
     expect(r.suggestions.some((s) => s.kind === "exercise")).toBe(true);
   });
 
+  it("fills generic kg ladders when load history is empty without inventing chat snippets (5×5 tail)", () => {
+    const r = workoutChatSuggest({
+      value: "bench press 5×5 ",
+      caret: "bench press 5×5 ".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+      recentLoadSnippets: [],
+      currentExerciseLoadSnippets: [],
+      unitHint: "kg",
+    });
+    expect(r.phase).toBe("load");
+    expect(r.suggestions.every((s) => s.kind === "load")).toBe(true);
+    expect(r.suggestions.map((s) => s.insertText)).toEqual([
+      " @ 20kg",
+      " @ 40kg",
+      " @ 60kg",
+      " @ 80kg",
+      " @ 100kg",
+    ]);
+  });
+
+  it("pads with generic ladders after ranked history loads (≤6 chips)", () => {
+    const r = workoutChatSuggest({
+      value: "Bench Press 5x5",
+      caret: "Bench Press 5x5".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+      recentLoadSnippets: [" @ 50kg", " @ 72.5kg"],
+      currentExerciseLoadSnippets: [],
+      unitHint: "kg",
+    });
+    expect(r.phase).toBe("load");
+    expect(r.suggestions.length).toBe(6);
+    expect(r.suggestions[0]?.insertText).toBe(" @ 50kg");
+    expect(r.suggestions[1]?.insertText).toBe(" @ 72.5kg");
+    expect(r.suggestions[2]?.insertText).toBe(" @ 20kg");
+    expect(r.suggestions[5]?.insertText).toBe(" @ 80kg");
+  });
+
+  it("fills generic lb ladders when unitHint is lb (empty load history)", () => {
+    const r = workoutChatSuggest({
+      value: "squat 3×10 ",
+      caret: "squat 3×10 ".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+      recentLoadSnippets: [],
+      currentExerciseLoadSnippets: [],
+      unitHint: "lb",
+    });
+    expect(r.phase).toBe("load");
+    expect(r.suggestions.map((s) => s.insertText)).toEqual([
+      " @ 45lb",
+      " @ 95lb",
+      " @ 135lb",
+      " @ 185lb",
+      " @ 225lb",
+    ]);
+  });
+
+  it("uses BW placeholders instead of fabricated kg chips for catalog bodyweight + slug match", () => {
+    const bwCatalog: Pick<ExerciseRecord, "slug" | "name" | "category">[] = [
+      { slug: "pull-ups", name: "Pull Ups", category: "Bodyweight" },
+    ];
+    const r = workoutChatSuggest({
+      value: "pull ups 5x5 ",
+      caret: "pull ups 5x5 ".length,
+      recentExerciseNames: [],
+      catalogExercises: bwCatalog,
+      currentExerciseSlug: "pull-ups",
+      recentUserTexts: [],
+      recentLoadSnippets: [],
+      currentExerciseLoadSnippets: [],
+      unitHint: "kg",
+    });
+    expect(r.phase).toBe("load");
+    expect(r.suggestions.map((s) => s.insertText)).toEqual([" @ BW", " @ bodyweight"]);
+    expect(r.suggestions.some((s) => /\bkg\b/i.test(s.insertText))).toBe(false);
+  });
+
   it("proposes load chip after sets×reps tail", () => {
     const r = workoutChatSuggest({
       value: "squat 3x10",

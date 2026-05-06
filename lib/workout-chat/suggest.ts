@@ -15,6 +15,17 @@ export const WORKOUT_CHAT_SUGGEST_MAX_CUSTOM = 15;
 /** Max chips shown in the composer strip. */
 export const WORKOUT_CHAT_SUGGEST_MAX_CHIPS = 6;
 
+/**
+ * Generic barbell-ish defaults when there is no history-derived `@ …` load text.
+ * Not user-specific; explicit unit suffix matches {@link WorkoutChatSuggestInput.unitHint}.
+ */
+export const WORKOUT_CHAT_SUGGEST_DEFAULT_LOAD_KG = [
+  20, 40, 60, 80, 100,
+] as const;
+export const WORKOUT_CHAT_SUGGEST_DEFAULT_LOAD_LB = [
+  45, 95, 135, 185, 225,
+] as const;
+
 export type CatalogExerciseInput = Pick<
   ExerciseRecord,
   "slug" | "name" | "category"
@@ -470,7 +481,15 @@ function exactCatalogLineQualifiesForVolume(
   return runnerUpRatio < EXACT_LINE_VOLUME_MAX_RUNNER_UP_RATIO;
 }
 
-function loadSnippetChips(input: WorkoutChatSuggestInput): WorkoutChatSuggestionItem[] {
+function normalizeLoadChipDedupeKey(insertText: string): string {
+  return normalizeSuggestSpaces(insertText).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** History order: active block snippets first, then recent chat-derived snippets (deduped). */
+function collectOrderedLoadSnippetItems(
+  input: WorkoutChatSuggestInput,
+  maxPick: number,
+): WorkoutChatSuggestionItem[] {
   const merged = [
     ...(input.currentExerciseLoadSnippets ?? []),
     ...(input.recentLoadSnippets ?? []),
@@ -488,8 +507,113 @@ function loadSnippetChips(input: WorkoutChatSuggestInput): WorkoutChatSuggestion
       insertText: s,
       kind: "load",
     });
-    if (out.length >= WORKOUT_CHAT_SUGGEST_MAX_CHIPS) break;
+    if (out.length >= maxPick) break;
   }
+  return out;
+}
+
+function catalogOrResolvedExerciseImpliesBodyweight(
+  slug: string | null | undefined,
+  catalog: CatalogExerciseInput[],
+  lineTrimEnd: string,
+): boolean {
+  if (slug) {
+    const fromCat = catalog.find((e) => e.slug === slug);
+    const cat = fromCat?.category ?? null;
+    if (
+      typeof cat === "string" &&
+      cat.trim().toLowerCase() === "bodyweight"
+    ) {
+      return true;
+    }
+    const full = getExerciseBySlug(slug);
+    if (
+      full?.category?.trim().toLowerCase() === "bodyweight"
+    ) {
+      return true;
+    }
+  }
+
+  const lineLow = lineTrimEnd.toLowerCase();
+  for (const e of catalog) {
+    if (e.category?.trim().toLowerCase() !== "bodyweight") continue;
+    const n = e.name.toLowerCase();
+    if (minResolvedNameLen(n) && lineLow.includes(n)) return true;
+    const slugSp = slugAsSpaces(e.slug).toLowerCase();
+    if (slugSp.length >= 5 && lineLow.includes(slugSp)) return true;
+  }
+
+  return false;
+}
+
+/** Generic load chips — clearly not from the user's logged history when used as padding only. */
+function defaultBarbellLoadChips(unit: "kg" | "lb"): WorkoutChatSuggestionItem[] {
+  const ladder =
+    unit === "lb"
+      ? WORKOUT_CHAT_SUGGEST_DEFAULT_LOAD_LB
+      : WORKOUT_CHAT_SUGGEST_DEFAULT_LOAD_KG;
+  return ladder.map((w) => {
+    const tail = `${w}${unit}`;
+    const insertText = ` @ ${tail}`;
+    return {
+      label: insertText.trim(),
+      insertText,
+      kind: "load" as const,
+    };
+  });
+}
+
+function defaultBodyweightLoadChips(): WorkoutChatSuggestionItem[] {
+  return [
+    {
+      label: "@ BW",
+      insertText: " @ BW",
+      kind: "load",
+    },
+    {
+      label: "@ bodyweight",
+      insertText: " @ bodyweight",
+      kind: "load",
+    },
+  ];
+}
+
+/**
+ * History-ranked load chips first, then padded with generic ladders (or BW placeholders)
+ * up to {@link WORKOUT_CHAT_SUGGEST_MAX_CHIPS}. Defaults never reorder history.
+ */
+function mergeHistoryAndDefaultLoadChips(
+  lineTrimEnd: string,
+  input: WorkoutChatSuggestInput,
+): WorkoutChatSuggestionItem[] {
+  const history = collectOrderedLoadSnippetItems(input, 64);
+  const unit = input.unitHint === "lb" ? "lb" : "kg";
+  const bw = catalogOrResolvedExerciseImpliesBodyweight(
+    input.currentExerciseSlug ?? null,
+    input.catalogExercises,
+    lineTrimEnd,
+  );
+  const defaults = bw ? defaultBodyweightLoadChips() : defaultBarbellLoadChips(unit);
+
+  const seenNorm = new Set<string>();
+  const out: WorkoutChatSuggestionItem[] = [];
+
+  for (const h of history) {
+    if (out.length >= WORKOUT_CHAT_SUGGEST_MAX_CHIPS) return out;
+    const k = normalizeLoadChipDedupeKey(h.insertText);
+    if (seenNorm.has(k)) continue;
+    seenNorm.add(k);
+    out.push(h);
+  }
+
+  for (const d of defaults) {
+    if (out.length >= WORKOUT_CHAT_SUGGEST_MAX_CHIPS) break;
+    const k = normalizeLoadChipDedupeKey(d.insertText);
+    if (seenNorm.has(k)) continue;
+    seenNorm.add(k);
+    out.push(d);
+  }
+
   return out;
 }
 
@@ -556,7 +680,7 @@ function tryLoadAndVolumePhase(
   }
 
   if (SETS_REPS_TAIL.test(lineBeforeTrimEnd) || REPS_WORD_TAIL.test(lineBeforeTrimEnd)) {
-    const loads = loadSnippetChips(input);
+    const loads = mergeHistoryAndDefaultLoadChips(lineBeforeTrimEnd, input);
     if (loads.length > 0) return { phase: "load", suggestions: loads };
   }
 
