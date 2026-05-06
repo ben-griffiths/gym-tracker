@@ -4,8 +4,8 @@
 // flushes when online.
 //
 // Versioned cache name lets us bump and clear stale entries on deploy.
-const SHELL_CACHE = "liftlog-shell-v6";
-const RUNTIME_CACHE = "liftlog-runtime-v6";
+const SHELL_CACHE = "liftlog-shell-v7";
+const RUNTIME_CACHE = "liftlog-runtime-v7";
 const OFFLINE_FALLBACK = "/";
 
 // Precache every top-level navigation. Without this, visiting /strength or
