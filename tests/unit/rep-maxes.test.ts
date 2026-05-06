@@ -3,12 +3,21 @@ import { EXERCISES, getExerciseBySlug } from "@/lib/exercises";
 import {
   buildRepMaxRows,
   catalogIntermediateOneRmKg,
+  compareCatalogOnlyRowsDesc,
   compareRowsWithLoggedDataDesc,
+  type RepMaxRow,
+  type RepMaxTableItem,
 } from "@/lib/rep-maxes";
 import type { HistorySession } from "@/lib/workout-history";
 
 /** Bench Press `standards`: male intermediate 98 kg, female 51 kg → neutral (98+51)/2 in kg. */
 const BENCH_NEUTRAL_INTERMEDIATE_KG = (98 + 51) / 2;
+
+function dataRowsOnly(items: RepMaxTableItem[]): RepMaxRow[] {
+  return items
+    .filter((i): i is { kind: "row"; row: RepMaxRow } => i.kind === "row")
+    .map((i) => i.row);
+}
 
 describe("catalogIntermediateOneRmKg", () => {
   it("uses neutral average of male/female intermediate (Bench Press fixture)", () => {
@@ -19,19 +28,18 @@ describe("catalogIntermediateOneRmKg", () => {
 });
 
 describe("buildRepMaxRows", () => {
-  it("lists every catalog exercise once with no sessions (A–Z)", () => {
-    const rows = buildRepMaxRows([]);
+  it("lists every catalog exercise once with no sessions (catalog order: Est 1RM desc, nulls last, then name)", () => {
+    const items = buildRepMaxRows([]);
+    expect(items.some((i) => i.kind === "separator")).toBe(false);
+    const rows = dataRowsOnly(items);
     expect(rows).toHaveLength(EXERCISES.length);
-    const names = rows.map((r) => r.exerciseName);
-    const sorted = [...names].sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base" }),
-    );
-    expect(names).toEqual(sorted);
+    const sorted = [...rows].sort(compareCatalogOnlyRowsDesc);
+    expect(rows.map((r) => r.slug)).toEqual(sorted.map((r) => r.slug));
   });
 
   it("marks catalog bench row with inferred intermediate 1RM (not logged)", () => {
-    const rows = buildRepMaxRows([]);
-    const bench = rows.find((r) => r.slug === "bench-press");
+    const items = buildRepMaxRows([]);
+    const bench = dataRowsOnly(items).find((r) => r.slug === "bench-press");
     expect(bench).toBeDefined();
     expect(bench!.estimateKind).toBe("catalog");
     expect(bench!.estimatedOneRm).toBe(BENCH_NEUTRAL_INTERMEDIATE_KG);
@@ -54,7 +62,9 @@ describe("buildRepMaxRows", () => {
         ],
       },
     ];
-    const rows = buildRepMaxRows(sessions);
+    const items = buildRepMaxRows(sessions);
+    expect(items.filter((i) => i.kind === "separator")).toHaveLength(1);
+    const rows = dataRowsOnly(items);
     expect(rows.filter((r) => r.slug === "bench-press")).toHaveLength(1);
     expect(rows.some((r) => r.slug === "bench-press" && r.estimateKind === "logged")).toBe(
       true,
@@ -85,7 +95,8 @@ describe("buildRepMaxRows", () => {
         ],
       },
     ];
-    const rows = buildRepMaxRows(sessions);
+    const items = buildRepMaxRows(sessions);
+    const rows = dataRowsOnly(items);
     const logged = rows.filter(
       (r) => r.estimateKind === "logged" || r.bestBodyweightReps !== null,
     );
@@ -99,12 +110,16 @@ describe("buildRepMaxRows", () => {
     if (deadRow!.estimatedOneRm !== null && benchRow!.estimatedOneRm !== null) {
       expect(deadRow!.estimatedOneRm).toBeGreaterThanOrEqual(benchRow!.estimatedOneRm);
     }
-    const iBench = rows.findIndex((r) => r.slug === "bench-press");
-    const iDead = rows.findIndex((r) => r.slug === "deadlift");
+    const sep = items.findIndex((i) => i.kind === "separator");
+    expect(sep).toBeGreaterThan(-1);
+    const iBench = items.findIndex((i) => i.kind === "row" && i.row.slug === "bench-press");
+    const iDead = items.findIndex((i) => i.kind === "row" && i.row.slug === "deadlift");
     expect(iDead).toBeLessThan(iBench);
+    expect(iBench).toBeLessThan(sep);
+    expect(iDead).toBeLessThan(sep);
   });
 
-  it("places every logged row before any catalog-only inferred row", () => {
+  it("places every logged row before any catalog-only inferred row, with a separator in between", () => {
     const sessions: HistorySession[] = [
       {
         id: "s1",
@@ -120,11 +135,15 @@ describe("buildRepMaxRows", () => {
         ],
       },
     ];
-    const rows = buildRepMaxRows(sessions);
-    const firstCatalogOnly = rows.findIndex((r) => r.estimateKind === "catalog");
-    const iDead = rows.findIndex((r) => r.slug === "deadlift");
-    expect(firstCatalogOnly).toBeGreaterThan(0);
-    expect(iDead).toBeLessThan(firstCatalogOnly);
+    const items = buildRepMaxRows(sessions);
+    const sep = items.findIndex((i) => i.kind === "separator");
+    const firstCatalogOnly = items.findIndex(
+      (i) => i.kind === "row" && i.row.estimateKind === "catalog",
+    );
+    const iDead = items.findIndex((i) => i.kind === "row" && i.row.slug === "deadlift");
+    expect(sep).toBeGreaterThan(0);
+    expect(firstCatalogOnly).toBeGreaterThan(sep);
+    expect(iDead).toBeLessThan(sep);
   });
 });
 
@@ -154,5 +173,115 @@ describe("compareRowsWithLoggedDataDesc", () => {
     };
     expect(compareRowsWithLoggedDataDesc(weighted, bw)).toBeLessThan(0);
     expect(compareRowsWithLoggedDataDesc(bw, weighted)).toBeGreaterThan(0);
+  });
+});
+
+describe("compareCatalogOnlyRowsDesc", () => {
+  it("orders higher catalog Est 1RM first", () => {
+    const hi = {
+      slug: "a",
+      exerciseName: "A",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: 200,
+      estimateSource: null,
+      estimateKind: "catalog" as const,
+      bestBodyweightReps: null,
+    };
+    const lo = {
+      slug: "b",
+      exerciseName: "B",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: 100,
+      estimateSource: null,
+      estimateKind: "catalog" as const,
+      bestBodyweightReps: null,
+    };
+    expect(compareCatalogOnlyRowsDesc(hi, lo)).toBeLessThan(0);
+    expect(compareCatalogOnlyRowsDesc(lo, hi)).toBeGreaterThan(0);
+  });
+
+  it("places null Est 1RM after numeric estimates", () => {
+    const withEst: RepMaxRow = {
+      slug: "a",
+      exerciseName: "Zebra",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: 50,
+      estimateSource: null,
+      estimateKind: "catalog",
+      bestBodyweightReps: null,
+    };
+    const noEst: RepMaxRow = {
+      slug: "b",
+      exerciseName: "Apple",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: null,
+      estimateSource: null,
+      estimateKind: null,
+      bestBodyweightReps: null,
+    };
+    expect(compareCatalogOnlyRowsDesc(withEst, noEst)).toBeLessThan(0);
+    expect(compareCatalogOnlyRowsDesc(noEst, withEst)).toBeGreaterThan(0);
+  });
+
+  it("when both Est 1RM are null, sorts by exercise name A–Z", () => {
+    const zebra: RepMaxRow = {
+      slug: "z",
+      exerciseName: "Zebra",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: null,
+      estimateSource: null,
+      estimateKind: null,
+      bestBodyweightReps: null,
+    };
+    const apple: RepMaxRow = {
+      slug: "a",
+      exerciseName: "Apple",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: null,
+      estimateSource: null,
+      estimateKind: null,
+      bestBodyweightReps: null,
+    };
+    expect(compareCatalogOnlyRowsDesc(apple, zebra)).toBeLessThan(0);
+    expect(compareCatalogOnlyRowsDesc(zebra, apple)).toBeGreaterThan(0);
+  });
+
+  it("breaks ties on equal numeric Est 1RM by exercise name A–Z", () => {
+    const b: RepMaxRow = {
+      slug: "b",
+      exerciseName: "Bench",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: 100,
+      estimateSource: null,
+      estimateKind: "catalog",
+      bestBodyweightReps: null,
+    };
+    const a: RepMaxRow = {
+      slug: "a",
+      exerciseName: "Arnold",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: 100,
+      estimateSource: null,
+      estimateKind: "catalog",
+      bestBodyweightReps: null,
+    };
+    expect(compareCatalogOnlyRowsDesc(a, b)).toBeLessThan(0);
+    expect(compareCatalogOnlyRowsDesc(b, a)).toBeGreaterThan(0);
   });
 });

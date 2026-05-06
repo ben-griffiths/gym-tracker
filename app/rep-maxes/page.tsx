@@ -13,6 +13,7 @@ import {
 } from "@/lib/rep-maxes";
 
 const REP_COLUMNS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const REP_MAX_TABLE_COL_SPAN = 1 + REP_COLUMNS.length + 1;
 
 function RepMaxesTableHead() {
   return (
@@ -41,6 +42,21 @@ function RepMaxesTableHead() {
         </th>
       </tr>
     </thead>
+  );
+}
+
+function RepMaxOtherExercisesDividerRow() {
+  return (
+    <tr className="border-0">
+      <td
+        colSpan={REP_MAX_TABLE_COL_SPAN}
+        className="border-t border-border bg-muted/15 px-4 py-2 text-center text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+        role="separator"
+        aria-label="Other exercises"
+      >
+        Other exercises
+      </td>
+    </tr>
   );
 }
 
@@ -136,7 +152,14 @@ function RepMaxExerciseRow({ row }: { row: RepMaxRow }) {
           </td>
         );
       })}
-      <td className="sticky right-0 z-10 whitespace-nowrap bg-card px-2 py-2 text-center tabular-nums before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border">
+      <td
+        className="sticky right-0 z-10 whitespace-nowrap bg-card px-2 py-2 text-center tabular-nums before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-border"
+        title={
+          row.estimatedOneRm !== null && row.estimateKind === "catalog"
+            ? "Catalog intermediate 1RM (StrengthLevel): neutral average of male and female intermediate tiers when both exist; converted to kg."
+            : undefined
+        }
+      >
         {row.estimatedOneRm !== null && row.estimateKind === "logged" && row.estimateSource ? (
           <div className="flex flex-col items-center leading-tight">
             <span className="font-semibold">
@@ -147,17 +170,7 @@ function RepMaxExerciseRow({ row }: { row: RepMaxRow }) {
             </span>
           </div>
         ) : row.estimatedOneRm !== null && row.estimateKind === "catalog" ? (
-          <div className="flex flex-col items-center leading-tight">
-            <span className="font-semibold">
-              {Math.round(row.estimatedOneRm)}
-            </span>
-            <span
-              className="text-[10px] font-normal text-muted-foreground"
-              title="Catalog intermediate 1RM (StrengthLevel): neutral average of male and female intermediate tiers when both exist; converted to kg."
-            >
-              StrengthLevel · intermediate
-            </span>
-          </div>
+          <span className="font-semibold">{Math.round(row.estimatedOneRm)}</span>
         ) : row.bestBodyweightReps !== null ? (
           <div className="flex flex-col items-center leading-tight">
             <span className="font-semibold">{row.bestBodyweightReps}</span>
@@ -176,7 +189,7 @@ function RepMaxExerciseRow({ row }: { row: RepMaxRow }) {
 export default function RepMaxesPage() {
   const historyQuery = useHistoryGroups();
 
-  const rows = useMemo(() => {
+  const tableItems = useMemo(() => {
     const sessions = (historyQuery.data?.groups ?? []).flatMap(
       (group) => group.sessions,
     );
@@ -204,19 +217,24 @@ export default function RepMaxesPage() {
                   Rep maxes
                 </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Logged exercises first (strongest estimated 1RM in kg), then the
-                  rest of the catalog A–Z. Estimates from your log show weight ×
-                  reps; catalog-only rows use StrengthLevel intermediate
-                  (neutral M/F average).
+                  Logged exercises first (strongest estimated 1RM in kg), then
+                  other catalog exercises (estimated 1RM high to low; missing
+                  estimates last). Estimates from your log show weight × reps;
+                  catalog-only rows use StrengthLevel intermediate (neutral M/F
+                  average).
                 </p>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full w-max border-collapse text-sm">
                   <RepMaxesTableHead />
                   <tbody>
-                    {rows.map((row) => (
-                      <RepMaxExerciseRow key={row.slug} row={row} />
-                    ))}
+                    {tableItems.map((item) =>
+                      item.kind === "separator" ? (
+                        <RepMaxOtherExercisesDividerRow key={item.id} />
+                      ) : (
+                        <RepMaxExerciseRow key={item.row.slug} row={item.row} />
+                      ),
+                    )}
                   </tbody>
                 </table>
               </div>

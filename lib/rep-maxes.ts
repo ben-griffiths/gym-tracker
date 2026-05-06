@@ -102,20 +102,40 @@ export function compareRowsWithLoggedDataDesc(a: RepMaxRow, b: RepMaxRow) {
   });
 }
 
-function compareCatalogNameAsc(a: RepMaxRow, b: RepMaxRow) {
+/**
+ * Catalog-only (“other”) rows: sort by catalog Est 1RM (kg) **descending**;
+ * missing estimates (`null`, em dash in UI) sort **after** all numeric values.
+ * Stable tie-break: **exercise name** A–Z.
+ */
+export function compareCatalogOnlyRowsDesc(a: RepMaxRow, b: RepMaxRow) {
+  const aNum = a.estimatedOneRm != null;
+  const bNum = b.estimatedOneRm != null;
+  if (aNum && bNum) {
+    const diff = b.estimatedOneRm! - a.estimatedOneRm!;
+    if (diff !== 0) return diff;
+  } else if (aNum && !bNum) {
+    return -1;
+  } else if (!aNum && bNum) {
+    return 1;
+  }
   return a.exerciseName.localeCompare(b.exerciseName, undefined, {
     sensitivity: "base",
   });
 }
 
+export type RepMaxTableItem =
+  | { kind: "row"; row: RepMaxRow }
+  | { kind: "separator"; id: "other-exercises" };
+
 /**
  * Single ordered list for the rep-maxes table: rows **with** workout history
- * first (descending by the same comparator as before — estimated 1RM in kg,
- * then bodyweight reps, then name), then **catalog** exercises with no logs
- * (A–Z). Unlogged catalog rows get Est 1RM from {@link catalogIntermediateOneRmKg}
- * when standards exist.
+ * first (descending by estimated 1RM in kg, then bodyweight reps, then name),
+ * then — when both blocks are non-empty — a **separator**, then **catalog**
+ * exercises with no logs (Est 1RM descending per {@link compareCatalogOnlyRowsDesc}).
+ * Unlogged catalog rows get Est 1RM from {@link catalogIntermediateOneRmKg} when
+ * standards exist.
  */
-export function buildRepMaxRows(sessions: HistorySession[]): RepMaxRow[] {
+export function buildRepMaxRows(sessions: HistorySession[]): RepMaxTableItem[] {
   const byExercise = new Map<string, Agg>();
 
   for (const session of sessions) {
@@ -188,7 +208,17 @@ export function buildRepMaxRows(sessions: HistorySession[]): RepMaxRow[] {
       bestBodyweightReps: null,
     });
   }
-  catalogOnly.sort(compareCatalogNameAsc);
+  catalogOnly.sort(compareCatalogOnlyRowsDesc);
 
-  return [...loggedRows, ...catalogOnly];
+  const items: RepMaxTableItem[] = loggedRows.map((row) => ({
+    kind: "row" as const,
+    row,
+  }));
+  if (loggedRows.length > 0 && catalogOnly.length > 0) {
+    items.push({ kind: "separator", id: "other-exercises" });
+  }
+  for (const row of catalogOnly) {
+    items.push({ kind: "row", row });
+  }
+  return items;
 }
