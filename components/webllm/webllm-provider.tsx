@@ -26,6 +26,7 @@ import {
   clearLastWebllmInitProgress,
   classifyWebllmInitProgressPhase,
   recordLastWebllmInitProgress,
+  webllmProgressIndicatesNetworkParamFetch,
 } from "@/lib/webllm/init-progress";
 import { loadPreferredWebllmEngine } from "@/lib/webllm/engine-loader";
 import { bootstrapWebLLMStorage } from "@/lib/webllm/storage-bootstrap";
@@ -96,6 +97,11 @@ type WebllmContextValue = {
    * re-download may happen after storage pressure — null otherwise.
    */
   storagePersistenceHint: string | null;
+  /**
+   * When true during `loading`, the install UI uses a full-screen overlay (network shard download).
+   * When false, a slim header progress strip is used (cache read, GPU shaders, early boot).
+   */
+  blockingInstallUi: boolean;
 };
 
 const WebllmContext = createContext<WebllmContextValue | null>(null);
@@ -141,6 +147,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
   const [storagePersistenceHint, setStoragePersistenceHint] = useState<string | null>(
     null,
   );
+  const [blockingInstallUi, setBlockingInstallUi] = useState(false);
   const engineRef = useRef<MLCEngineInterface | null>(null);
   const loadGenRef = useRef(0);
   const statusRef = useRef<WebllmLoadStatus>(status);
@@ -215,6 +222,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
 
     setTrackedStatus("loading");
     setProgress(null);
+    setBlockingInstallUi(false);
     setErrorMessage(null);
     setErrorDetail(null);
     setStoragePersistenceHint(null);
@@ -306,6 +314,16 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
                 timeElapsed: report.timeElapsed,
                 text: report.text,
               });
+              const line = (report.text || "").trim();
+              if (webllmProgressIndicatesNetworkParamFetch(line)) {
+                setBlockingInstallUi(true);
+              } else if (
+                /^loading model from cache\[/i.test(line) ||
+                /^loading gpu shader modules\[/i.test(line) ||
+                /^finish loading on\b/i.test(line)
+              ) {
+                setBlockingInstallUi(false);
+              }
             },
           });
         } finally {
@@ -449,6 +467,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
         // The previous failed attempt set status="error"; flip back to
         // "loading" so the install overlay stays visible across retries.
         setTrackedStatus("loading");
+        setBlockingInstallUi(false);
         setErrorMessage(null);
         setErrorDetail(null);
         allowAutoloadAgain();
@@ -564,6 +583,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       retry,
       startModelLoad,
       storagePersistenceHint,
+      blockingInstallUi,
     };
   }, [
     status,
@@ -571,6 +591,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     errorMessage,
     errorDetail,
     storagePersistenceHint,
+    blockingInstallUi,
     getEngine,
     ensureEngineForChat,
     retry,

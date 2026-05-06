@@ -127,22 +127,22 @@ function setsLoggedReceipts(page: Page): Locator {
   return page.getByText(/^Added \d+ sets? to .+\.$/);
 }
 
-/** Parses kg from the last seven bench rows once every cell has rendered weight text. */
+/** Parses kg from the last seven bench rows once weight inputs are stable. */
 async function extractBenchSegmentKgValues(
   rows: Locator,
   segmentStart: number,
 ): Promise<number[] | null> {
+  const lbToKg = 0.45359237;
   const kgValues: number[] = [];
   for (let i = 0; i < 7; i += 1) {
-    const weightSpan = rows
-      .nth(segmentStart + i)
-      .locator("span.text-foreground")
-      .filter({ hasText: /\bkg\b/i });
-    if ((await weightSpan.count()) === 0) return null;
-    const t = (await weightSpan.first().innerText()).trim();
-    const m = t.match(/(\d+(?:\.\d+)?)\s*kg/i);
-    if (!m) return null;
-    kgValues.push(Number(m[1]));
+    const row = rows.nth(segmentStart + i);
+    const weightInput = row.locator('input[data-field="weight"]');
+    const raw = (await weightInput.inputValue()).trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    const unit = await row.getAttribute("data-weight-unit");
+    kgValues.push(unit === "lb" ? n * lbToKg : n);
   }
   return kgValues;
 }
@@ -183,16 +183,17 @@ async function expectDipsBwTierFourSets(
 
   const rowAt = (i: number) => rows.nth(offset + i);
 
-  // Bodyweight tiers use "– weight" (no kg); weighted tiers show kg.
+  // Bodyweight tiers: no weight / no unit chip; weighted tiers use kg inputs.
   await expect(rowAt(0)).not.toContainText(/\bkg\b/i);
   await expect(rowAt(1)).not.toContainText(/\bkg\b/i);
-  await expect(rowAt(2)).toContainText(/10\s*kg/i);
-  await expect(rowAt(3)).toContainText(/20\s*kg/i);
-  // Rep counts live in their own span — full row innerText concatenates set # + label ("110 reps").
-  await expect(rowAt(0).getByText("10 reps", { exact: true })).toBeVisible();
-  await expect(rowAt(1).getByText("7 reps", { exact: true })).toBeVisible();
-  await expect(rowAt(2).getByText("5 reps", { exact: true })).toBeVisible();
-  await expect(rowAt(3).getByText("2 reps", { exact: true })).toBeVisible();
+  await expect(rowAt(2).locator('input[data-field="weight"]')).toHaveValue("10");
+  await expect(rowAt(2)).toHaveAttribute("data-weight-unit", "kg");
+  await expect(rowAt(3).locator('input[data-field="weight"]')).toHaveValue("20");
+  await expect(rowAt(3)).toHaveAttribute("data-weight-unit", "kg");
+  await expect(rowAt(0).locator('input[data-field="reps"]')).toHaveValue("10");
+  await expect(rowAt(1).locator('input[data-field="reps"]')).toHaveValue("7");
+  await expect(rowAt(2).locator('input[data-field="reps"]')).toHaveValue("5");
+  await expect(rowAt(3).locator('input[data-field="reps"]')).toHaveValue("2");
 }
 
 // ---------------------------------------------------------------------------
@@ -219,10 +220,14 @@ test.describe("WebLLM chat — real Llama 3.2 1B", () => {
     await expect(
       page.getByText(/^Added 5 sets to Bench Press\.$/i),
     ).toBeVisible({ timeout: RENDER_TIMEOUT });
-    // Weight rendered as 100 kg in the active block.
-    await expect(page.getByText(/100\s*kg/i).first()).toBeVisible({
-      timeout: RENDER_TIMEOUT,
-    });
+    // Active block: weight inputs show 100 kg for working sets.
+    const benchExpanded = page
+      .locator("[data-exercise-block][data-expanded-block]")
+      .filter({ has: page.getByText(/bench press/i) })
+      .last();
+    await expect(
+      benchExpanded.locator('input[data-field="weight"]').first(),
+    ).toHaveValue("100", { timeout: RENDER_TIMEOUT });
     // Active-block sanity: 5 delete buttons in the only expanded block.
     expect(await deleteSetButtons(page).count()).toBe(5);
     void before;
@@ -262,13 +267,13 @@ test.describe("WebLLM chat — real Llama 3.2 1B", () => {
       await expect(
         rows
           .nth(segmentStart + w)
-          .getByText(`${warmupReps[w]} reps`, { exact: true }),
-      ).toBeVisible();
+          .locator('input[data-field="reps"]'),
+      ).toHaveValue(String(warmupReps[w]));
     }
     for (let j = 0; j < 5; j += 1) {
       await expect(
-        rows.nth(segmentStart + 2 + j).getByText("5 reps", { exact: true }),
-      ).toBeVisible();
+        rows.nth(segmentStart + 2 + j).locator('input[data-field="reps"]'),
+      ).toHaveValue("5");
     }
 
     let kgValues: number[] = [];
@@ -303,7 +308,14 @@ test.describe("WebLLM chat — real Llama 3.2 1B", () => {
     await expect(
       page.getByText(/^Added 3 sets to .*Squat\.?$/i),
     ).toBeVisible({ timeout: RENDER_TIMEOUT });
-    await expect(page.getByText(/140\s*kg/i).first()).toBeVisible({
+    await expect(
+      page
+        .locator("[data-exercise-block][data-expanded-block]")
+        .filter({ has: page.getByText(/squat/i) })
+        .last()
+        .locator('input[data-field="weight"]')
+        .first(),
+    ).toHaveValue("140", {
       timeout: RENDER_TIMEOUT,
     });
   });

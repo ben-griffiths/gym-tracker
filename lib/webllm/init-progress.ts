@@ -12,6 +12,23 @@ export type WebllmInitProgressPhase =
 
 const lower = (s: string) => s.toLowerCase();
 
+/**
+ * `@mlc-ai/web-llm` reports distinct copy for **downloading shards into Cache Storage**
+ * (`Fetching param cache[…]` + `…MB fetched`) vs **reading cached shards onto WebGPU**
+ * (`Loading model from cache[…]` + `…MB loaded`). Use this to decide when a full-screen
+ * blocking overlay is appropriate.
+ *
+ * See `ArtifactCacheInstaller.fetchTensorCacheInternal` in the web-llm bundle (~`Fetching param cache`).
+ */
+export function webllmProgressIndicatesNetworkParamFetch(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^fetching param cache\[/i.test(t)) return true;
+  // Download branch uses "fetched"; cache read branch uses "loaded".
+  if (/\d+MB fetched\./i.test(t)) return true;
+  return false;
+}
+
 /** Map latest progress line to a coarse phase bucket (not stable across `@mlc-ai/web-llm` versions). */
 export function classifyWebllmInitProgressPhase(text: string): WebllmInitProgressPhase {
   const t = lower(text.trim());
