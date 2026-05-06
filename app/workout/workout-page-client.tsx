@@ -55,8 +55,14 @@ import {
   updateSet,
 } from "@/lib/api";
 import { updateSetSchema } from "@/lib/validators/workout";
-import { getExerciseByName, getExerciseBySlug } from "@/lib/exercises";
+import { EXERCISES, getExerciseByName, getExerciseBySlug } from "@/lib/exercises";
 import { planChatTurn } from "@/lib/workout-chat/chat-flow";
+import {
+  extractLoadSnippetsFromTexts,
+  formatSetsLoadSnippetsFromBlockSets,
+  type WorkoutChatSuggestOutput,
+  workoutChatSuggest,
+} from "@/lib/workout-chat/suggest";
 import { toKg } from "@/lib/lift-profiles";
 import {
   estimateOneRm,
@@ -136,6 +142,12 @@ type ExerciseBlock = {
 };
 
 type Message = WorkoutChatMessage;
+
+const WORKOUT_CHAT_COMPOSER_CATALOG = EXERCISES.map((e) => ({
+  slug: e.slug,
+  name: e.name,
+  category: e.category,
+}));
 
 const SEED_MESSAGES: Message[] = [
   {
@@ -279,6 +291,17 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     id: string;
     text: string;
   } | null>(null);
+  const [composerText, setComposerText] = useState("");
+  const [composerSuggest, setComposerSuggest] = useState<WorkoutChatSuggestOutput>(
+    { ghost: null, phase: "exercise", suggestions: [] },
+  );
+  const composerTextRef = useRef("");
+  const composerCaretRef = useRef(0);
+  const composerImeRef = useRef(false);
+  const composerGhostDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const composerGhostSuppressRef = useRef(false);
 
   const scrollRootRef = useAppScrollRootRef();
 
@@ -290,6 +313,14 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     return () => {
       if (transcriptDebounceRef.current) {
         clearTimeout(transcriptDebounceRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (composerGhostDebounceRef.current) {
+        clearTimeout(composerGhostDebounceRef.current);
       }
     };
   }, []);
@@ -885,6 +916,91 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
       unit: lastWeightUnit,
     };
   }, [allSets, lastWeightUnit]);
+
+  const recentExerciseNamesForSuggest = useMemo(() => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    const push = (raw: string | null | undefined) => {
+      const t = raw?.trim();
+      if (!t) return;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      names.push(t);
+    };
+
+    const groups = historyQuery.data?.groups ?? [];
+    for (const g of groups) {
+      for (const s of g.sessions) {
+        for (const eg of s.exercises ?? []) {
+          push(eg.exercise?.name ?? eg.customExerciseName ?? undefined);
+        }
+      }
+    }
+
+    const orderedBlocks = messages
+      .filter(
+        (entry): entry is Extract<Message, { kind: "exercise-block" }> =>
+          entry.kind === "exercise-block",
+      )
+      .map((entry) => blocks[entry.blockId])
+      .filter((block): block is ExerciseBlock => Boolean(block) && !block.deleted);
+
+    for (const b of orderedBlocks) {
+      push(b.exercise.name);
+    }
+
+    return names;
+  }, [historyQuery.data, messages, blocks]);
+
+  const recentUserTextsForSnippets = useMemo(() => {
+    const out: string[] = [];
+    for (let i = messages.length - 1; i >= 0 && out.length < 40; i--) {
+      const m = messages[i];
+      if (m.kind === "text" && m.role === "user") out.push(m.text);
+    }
+    return out;
+  }, [messages]);
+
+  const recentLoadSnippetsForComposer = useMemo(
+    () => extractLoadSnippetsFromTexts(recentUserTextsForSnippets),
+    [recentUserTextsForSnippets],
+  );
+
+  const currentExerciseLoadSnippetsForComposer = useMemo(() => {
+    if (!activeBlock || activeBlock.deleted) return [];
+    return formatSetsLoadSnippetsFromBlockSets(activeBlock.sets);
+  }, [activeBlock]);
+
+  const refreshComposerGhost = useCallback(() => {
+    if (composerGhostDebounceRef.current) {
+      clearTimeout(composerGhostDebounceRef.current);
+    }
+    composerGhostDebounceRef.current = setTimeout(() => {
+      composerGhostDebounceRef.current = null;
+      if (composerImeRef.current || composerGhostSuppressRef.current) return;
+      const next = workoutChatSuggest({
+        value: composerTextRef.current,
+        caret: composerCaretRef.current,
+        recentExerciseNames: recentExerciseNamesForSuggest,
+        catalogExercises: WORKOUT_CHAT_COMPOSER_CATALOG,
+        currentExerciseSlug: activeExercise?.slug ?? null,
+        unitHint: lastWeightUnit,
+        recentLoadSnippets: recentLoadSnippetsForComposer,
+        currentExerciseLoadSnippets: currentExerciseLoadSnippetsForComposer,
+        recentUserTexts: recentUserTextsForSnippets,
+        skipSuggestions: false,
+      });
+      setComposerSuggest(next);
+    }, 65);
+  }, [
+    recentExerciseNamesForSuggest,
+    recentLoadSnippetsForComposer,
+    currentExerciseLoadSnippetsForComposer,
+    recentUserTextsForSnippets,
+    activeExercise?.slug,
+    lastWeightUnit,
+  ]);
 
   function appendMessage(message: Message) {
     commitMessages([...messagesRef.current, message]);
@@ -3525,6 +3641,31 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
             cameraTrigger={cameraTrigger}
             disabled={revertBusy || webllm.chatSendBlocked}
             isLoading={cameraBusy || chatMutation.isPending || revertBusy}
+            text={composerText}
+            onComposerActivity={({ text, caret }) => {
+              composerGhostSuppressRef.current = false;
+              composerTextRef.current = text;
+              composerCaretRef.current = caret;
+              setComposerText(text);
+              refreshComposerGhost();
+            }}
+            suggestions={composerSuggest.suggestions}
+            onSuggestionsDismiss={() => {
+              composerGhostSuppressRef.current = true;
+              setComposerSuggest((s) => ({
+                ...s,
+                suggestions: [],
+              }));
+            }}
+            onImeCompositionChange={(active) => {
+              composerImeRef.current = active;
+              if (active) {
+                setComposerSuggest((s) => ({
+                  ...s,
+                  suggestions: [],
+                }));
+              } else refreshComposerGhost();
+            }}
           />
         </div>
       </footer>
