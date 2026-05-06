@@ -146,10 +146,10 @@ function score(queryTokens: string[], exercise: ExerciseRecord): number {
   return coverage * 1000 + hits * 15 + categoryBoost + brevity;
 }
 
-export function searchExercises(
-  query: string,
-  limit = 5,
-): ExerciseRecord[] {
+export type ExerciseRank = { exercise: ExerciseRecord; score: number };
+
+/** Same ranking as {@link searchExercises}, but includes numeric scores for tie-breaking UI. */
+export function rankExercisesForQuery(query: string, limit = 5): ExerciseRank[] {
   const trimmed = query?.trim();
   if (!trimmed) return [];
 
@@ -163,38 +163,48 @@ export function searchExercises(
     .filter(({ score: s }) => s > 0)
     .sort((a, b) => b.score - a.score);
 
-  const top: ExerciseRecord[] = [];
-  if (exact) top.push(exact);
+  const top: ExerciseRank[] = [];
+  if (exact) {
+    top.push({ exercise: exact, score: score(queryTokens, exact) || 10_000 });
+  }
 
-  for (const { entry } of ranked) {
-    if (top.some((candidate) => candidate.slug === entry.slug)) continue;
-    top.push(entry);
+  for (const { entry, score: sc } of ranked) {
+    if (top.some((c) => c.exercise.slug === entry.slug)) continue;
+    top.push({ exercise: entry, score: sc });
     if (top.length >= limit) break;
   }
 
-  // Colloquial one-word queries: "bench" should mean bench press, not e.g. bench dips.
   const preferred = SHORT_QUERY_PREFERRED_SLUG[trimmed.toLowerCase()];
   if (preferred) {
     const preferredEntry = getExerciseBySlug(preferred);
     if (preferredEntry) {
-      const at = top.findIndex((e) => e.slug === preferred);
+      const sc = score(queryTokens, preferredEntry);
+      const at = top.findIndex((e) => e.exercise.slug === preferred);
       if (at > 0) {
+        const rest = top.filter((e) => e.exercise.slug !== preferred);
         return [
-          preferredEntry,
-          ...top.filter((e) => e.slug !== preferred),
+          { exercise: preferredEntry, score: sc || 9_500 },
+          ...rest,
         ].slice(0, limit);
       }
-      // With a small `limit`, `top` may only contain a worse match — preferred was never added.
       if (at === -1) {
+        const rest = top.filter((e) => e.exercise.slug !== preferred);
         return [
-          preferredEntry,
-          ...top.filter((e) => e.slug !== preferred),
+          { exercise: preferredEntry, score: sc || 9_500 },
+          ...rest,
         ].slice(0, limit);
       }
     }
   }
 
   return top.slice(0, limit);
+}
+
+export function searchExercises(
+  query: string,
+  limit = 5,
+): ExerciseRecord[] {
+  return rankExercisesForQuery(query, limit).map((r) => r.exercise);
 }
 
 export function searchExercisesOrPopular(
@@ -204,4 +214,37 @@ export function searchExercisesOrPopular(
   const results = searchExercises(query, limit);
   if (results.length > 0) return results;
   return EXERCISES.slice(0, limit);
+}
+
+/**
+ * Full-catalog search for the exercise library UI. Empty query returns every
+ * exercise sorted A–Z; otherwise uses the same relevance ranking as chat search.
+ */
+export function filterExercisesBySearchQuery(query: string): ExerciseRecord[] {
+  const trimmed = query?.trim() ?? "";
+  if (!trimmed) {
+    return [...EXERCISES].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    );
+  }
+
+  const queryTokens = tokenize(trimmed);
+  if (queryTokens.length === 0) {
+    return [...EXERCISES].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    );
+  }
+
+  return EXERCISES.map((entry) => ({
+    entry,
+    score: score(queryTokens, entry),
+  }))
+    .filter(({ score: s }) => s > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.entry.name.localeCompare(b.entry.name, undefined, {
+        sensitivity: "base",
+      });
+    })
+    .map(({ entry }) => entry);
 }
