@@ -5,6 +5,7 @@ import {
   applyWorkoutChatSuggestionAtCaret,
   extractLoadSnippetsFromTexts,
   ghostSuffixIgnoreCase,
+  lineMatchesCanonicalCatalogExercise,
   rankExercisesForWorkoutChatSuggest,
   workoutChatSuggest,
 } from "@/lib/workout-chat/suggest";
@@ -165,6 +166,41 @@ describe("workoutChatSuggest", () => {
     expect(
       r.suggestions.some((s) => s.insertText.toLowerCase().includes("military")),
     ).toBe(true);
+  });
+
+  it("Bench Press at EOL with no trailing space yields non-empty volume chips when history is empty", () => {
+    const r = workoutChatSuggest({
+      value: "Bench Press",
+      caret: "Bench Press".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+    });
+    expect(r.phase).toBe("volume");
+    expect(r.suggestions.length).toBeGreaterThan(0);
+    expect(r.suggestions.every((s) => s.kind === "volume")).toBe(true);
+  });
+
+  it("trimmed exact match on catalog name is case-insensitive (volume phase)", () => {
+    const r = workoutChatSuggest({
+      value: "bEnCh PrEsS",
+      caret: "bEnCh PrEsS".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+    });
+    expect(r.phase).toBe("volume");
+    expect(r.suggestions.length).toBeGreaterThan(0);
+  });
+});
+
+describe("lineMatchesCanonicalCatalogExercise", () => {
+  it("matches catalog display name and slug-as-spaces", () => {
+    expect(lineMatchesCanonicalCatalogExercise("Bench Press", miniCatalog)).toBe(true);
+    expect(lineMatchesCanonicalCatalogExercise("bench press", miniCatalog)).toBe(true);
+    expect(lineMatchesCanonicalCatalogExercise("bench\u00a0press", miniCatalog)).toBe(true);
+    expect(lineMatchesCanonicalCatalogExercise("Squat", miniCatalog)).toBe(true);
+    expect(lineMatchesCanonicalCatalogExercise("bench", miniCatalog)).toBe(false);
   });
 });
 

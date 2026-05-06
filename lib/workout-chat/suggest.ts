@@ -411,6 +411,65 @@ function normalizeHyphensToSpaces(s: string): string {
   return s.replace(/-/g, " ");
 }
 
+/** Unicode NBSP (often from autocorrect) → normal space for comparisons. */
+function normalizeSuggestSpaces(s: string): string {
+  return s.replace(/\u00a0/g, " ");
+}
+
+/**
+ * True when the trimmed line exactly matches a catalog exercise display name
+ * (case-insensitive) or the slug rendered with spaces ("bench-press" → "bench press").
+ * Used to enter volume chips after a chip apply even when there is no trailing space yet,
+ * and when substring-only guards would otherwise keep ranking exercises.
+ */
+export function lineMatchesCanonicalCatalogExercise(
+  lineTrimmed: string,
+  catalog: CatalogExerciseInput[],
+): boolean {
+  const norm = normalizeSuggestSpaces(lineTrimmed).trim().toLowerCase();
+  if (!norm) return false;
+  for (const e of catalog) {
+    if (e.name.trim().toLowerCase() === norm) return true;
+    if (slugAsSpaces(e.slug).toLowerCase() === norm) return true;
+  }
+  return false;
+}
+
+/**
+ * Top-2 are "too close" — keep exercise chips for disambiguation (e.g. "shoulder press"
+ * matches the Shoulder Press record but Military Press is still a plausible runner-up).
+ */
+const EXACT_LINE_VOLUME_MAX_RUNNER_UP_RATIO = 0.91;
+
+/**
+ * True when the line is an exact canonical match **and** the ranker puts that exercise
+ * clearly ahead of alternatives (runner-up score ratio below {@link EXACT_LINE_VOLUME_MAX_RUNNER_UP_RATIO}).
+ */
+function exactCatalogLineQualifiesForVolume(
+  lineTrimEnd: string,
+  catalog: CatalogExerciseInput[],
+): boolean {
+  const norm = normalizeSuggestSpaces(lineTrimEnd).trim().toLowerCase();
+  if (!norm) return false;
+  let exact: CatalogExerciseInput | null = null;
+  for (const e of catalog) {
+    if (e.name.trim().toLowerCase() === norm) {
+      exact = e;
+      break;
+    }
+    if (slugAsSpaces(e.slug).toLowerCase() === norm) {
+      exact = e;
+      break;
+    }
+  }
+  if (!exact) return false;
+  const ranked = rankExercisesForWorkoutChatSuggest(lineTrimEnd, catalog);
+  if (ranked[0]?.exercise.slug !== exact.slug) return false;
+  if (ranked.length < 2) return true;
+  const runnerUpRatio = ranked[1]!.score / ranked[0]!.score;
+  return runnerUpRatio < EXACT_LINE_VOLUME_MAX_RUNNER_UP_RATIO;
+}
+
 function loadSnippetChips(input: WorkoutChatSuggestInput): WorkoutChatSuggestionItem[] {
   const merged = [
     ...(input.currentExerciseLoadSnippets ?? []),
@@ -504,15 +563,19 @@ function tryLoadAndVolumePhase(
   return null;
 }
 
+/** When chat history has no parseable volume tokens, still offer safe generic chips. */
+const FALLBACK_VOLUME_TEMPLATES = ["5", "8", "10", "12", "5×5", "3×8"] as const;
+
 function volumeTemplateChips(texts: string[]): WorkoutChatSuggestionItem[] {
   const raw = extractVolumeTemplatesFromTexts(texts, 24);
-  const reps = raw.filter((t) => /^\d+$/.test(t));
-  const combos = raw.filter((t) => t.includes("×"));
+  const merged = raw.length > 0 ? raw : [...FALLBACK_VOLUME_TEMPLATES];
+  const reps = merged.filter((t) => /^\d+$/.test(t));
+  const combos = merged.filter((t) => t.includes("×"));
   reps.sort((a, b) => Number(a) - Number(b));
   const ordered = [...reps, ...combos];
   return ordered.slice(0, WORKOUT_CHAT_SUGGEST_MAX_CHIPS).map((t) => ({
     label: t,
-    insertText: t.includes("×") ? `${t} ` : `${t} `,
+    insertText: `${t} `,
     kind: "volume" as const,
   }));
 }
@@ -526,7 +589,7 @@ export function workoutChatSuggest(
 
   const caret = Math.max(0, Math.min(input.caret, input.value.length));
   const { lineBefore } = splitLineAtCaret(input.value, caret);
-  const lineTrimEnd = lineBefore.replace(/\s+$/u, "");
+  const lineTrimEnd = normalizeSuggestSpaces(lineBefore).replace(/\s+$/u, "");
   const lineLower = lineTrimEnd.toLowerCase();
 
   const resolved = exerciseContextResolved(
@@ -539,18 +602,22 @@ export function workoutChatSuggest(
     !hasNumericVolumeContext(lineTrimEnd) &&
     !endsWithAtWeightMissingUnit(lineTrimEnd);
 
-  const trailingSpace = /\s$/u.test(lineBefore);
+  const trailingSpace = /\s$/u.test(normalizeSuggestSpaces(lineBefore));
 
   const lv = tryLoadAndVolumePhase(lineTrimEnd, input);
   if (lv && lv.suggestions.length > 0) {
     return { ghost: null, phase: lv.phase, suggestions: lv.suggestions };
   }
 
+  const volumeAfterResolvedExercise =
+    trailingSpace ||
+    exactCatalogLineQualifiesForVolume(lineTrimEnd, input.catalogExercises);
+
   if (
     resolved &&
     liftedOnly &&
     exerciseNameResolvedInLine(lineLower, input.catalogExercises) &&
-    trailingSpace
+    volumeAfterResolvedExercise
   ) {
     const vol = volumeTemplateChips(input.recentUserTexts ?? []);
     if (vol.length > 0) {
