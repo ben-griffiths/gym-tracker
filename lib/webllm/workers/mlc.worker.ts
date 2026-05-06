@@ -4,7 +4,7 @@
  * Mirrors [web-llm-chat `app/worker/web-worker.ts`](https://github.com/mlc-ai/web-llm-chat/blob/main/app/worker/web-worker.ts):
  * lazy `WebWorkerMLCEngineHandler` so the bundle doesn’t eagerly touch the backend until messages arrive.
  *
- * Colocated under `lib/workers/` next to [`webllm-engine-loader`](../webllm-engine-loader.ts)
+ * Colocated under `lib/webllm/workers/` next to [`engine-loader`](../engine-loader.ts)
  * so `new URL("./workers/mlc.worker.ts", import.meta.url)` resolves stably under webpack production.
  */
 

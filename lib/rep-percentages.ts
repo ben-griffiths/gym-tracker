@@ -29,6 +29,41 @@ export type WeightSequenceInput = {
 };
 
 /**
+ * Gym-coach style warmup reps **before** fixed working reps (NxM): lighter early
+ * warmups use **more** reps; the last warmup uses **fewer** reps so you don't grind
+ * before working sets (similar to common ChatGPT-style prescriptions).
+ */
+export function suggestWarmupRepsBeforeWorking(
+  workingReps: number,
+  warmupCount: number,
+): number[] {
+  const w = Math.max(1, Math.min(30, Math.round(workingReps)));
+  if (warmupCount <= 0) return [];
+
+  const approachReps = Math.max(
+    2,
+    Math.min(Math.max(2, w - 1), Math.round(w * 0.78)),
+  );
+  const highReps = Math.min(
+    15,
+    Math.max(w + 3, Math.round(w * 1.55)),
+  );
+
+  if (warmupCount === 1) {
+    const mid = Math.round((highReps + approachReps) / 2);
+    return [Math.max(2, Math.min(30, mid))];
+  }
+
+  const out: number[] = [];
+  for (let i = 0; i < warmupCount; i += 1) {
+    const t = i / (warmupCount - 1);
+    const r = Math.round(highReps + (approachReps - highReps) * t);
+    out.push(Math.max(2, Math.min(30, r)));
+  }
+  return out;
+}
+
+/**
  * Percentage of 1RM a lifter is expected to produce for the given rep count.
  * Clamps to the bounds of the scraped table (1..30 reps); repetitions outside
  * that range return the nearest boundary percentage rather than extrapolating.
@@ -88,9 +123,10 @@ export function weightAtRpe(
  * Suggest a full weight sequence for a block of sets.
  *
  * Default behavior: each set gets its own RPE-based target from its rep count.
- * Warmup-aware behavior: when `warmupSets > 0`, the first N sets are treated
- * as warmups and ramped from ~`warmupStartPct * 1RM` toward (but below) the
- * first working-set target. Remaining sets keep the working targets.
+ * Warmup-aware behavior: when `warmupSets > 0`, the first N rows get loads that
+ * ramp from a floor (~`warmupStartPct * 1RM`) toward (but below) the **working-set**
+ * target, using fractions of that working weight so loads stay sensible even when
+ * warmup reps are higher than working reps. Working rows keep `weightAtRpe` targets.
  */
 export function suggestWeightsForSetSequence(
   sets: WeightSequenceInput[],
@@ -129,14 +165,31 @@ export function suggestWeightsForSetSequence(
     baseTargets[warmupSets] ??
     baseTargets.find((value): value is number => value !== null) ??
     oneRmKg * 0.75;
-  const warmupStart = oneRmKg * warmupStartPct;
-  const warmupEnd = Math.max(warmupStart, workingTarget * 0.9);
 
+  const warmupStartFloor = oneRmKg * warmupStartPct;
   const next = [...baseTargets];
+
+  // Ramp loads as fractions of the **working** target so warmups stay light even
+  // when row reps are higher than working reps (pure weightAtRpe on high reps would
+  // overshoot). Early slots → lower fraction; last warmup → approaches working.
+  const fracLo = Math.max(
+    0.42,
+    Math.min(0.62, warmupStartFloor / workingTarget),
+  );
+  const fracHi = 0.88;
+
+  let prevKg = warmupStartFloor * 0.9;
+  const minStepKg = Math.max(2.5, oneRmKg * 0.012);
+
   for (let i = 0; i < warmupSets; i += 1) {
-    const t = warmupSets === 1 ? 0 : i / (warmupSets - 1);
-    next[i] = warmupStart + (warmupEnd - warmupStart) * t;
+    const t = warmupSets === 1 ? 1 : i / (warmupSets - 1);
+    let kg = workingTarget * (fracLo + (fracHi - fracLo) * t);
+    kg = Math.max(kg, warmupStartFloor, prevKg + minStepKg);
+    kg = Math.min(kg, workingTarget * 0.93);
+    prevKg = kg;
+    next[i] = kg;
   }
+
   return next;
 }
 
@@ -262,4 +315,80 @@ export function repsAtRpe(
   if (target < 1) return 1;
   if (target > MAX_REPS) return MAX_REPS;
   return target;
+}
+
+/**
+ * Rep targets for a load ladder when the **heaviest loaded set** defines capacity:
+ * infer 1RM from that set using the **same failure-point percentage as `weightAtRpe`**
+ * (`percentageOfOneRm(anchorReps + (10 − targetRpe))`), not `estimateOneRm`, so the
+ * anchor row lands exactly at `anchorReps` when inverted with `repsAtRpe`. Each loaded
+ * row then gets `repsAtRpe(load, oneRm, targetRpe)` (Strength Level table + RIR).
+ * Rows with no added load (bodyweight-only) get more reps than the lightest loaded step.
+ */
+export function suggestRepsAnchoredLoadLadderAtRpe(
+  rowLoadsKgAdded: Array<number | null>,
+  options: {
+    anchorIndex?: number;
+    anchorReps: number;
+    targetRpe?: number;
+  },
+): number[] {
+  const targetRpe = options.targetRpe ?? 8;
+  const n = rowLoadsKgAdded.length;
+
+  let anchorIdx = options.anchorIndex ?? n - 1;
+  while (
+    anchorIdx >= 0 &&
+    (rowLoadsKgAdded[anchorIdx] === null ||
+      !Number.isFinite(rowLoadsKgAdded[anchorIdx] as number) ||
+      (rowLoadsKgAdded[anchorIdx] as number) <= 0)
+  ) {
+    anchorIdx -= 1;
+  }
+  if (anchorIdx < 0) {
+    const fallback = Math.max(1, Math.round(options.anchorReps));
+    return Array.from({ length: n }, () => Math.min(MAX_REPS, fallback));
+  }
+
+  const anchorKg = rowLoadsKgAdded[anchorIdx] as number;
+  const anchorReps = Math.max(1, Math.round(options.anchorReps));
+  // Match `weightAtRpe` / chip semantics: working reps at RPE X imply failure at
+  // reps + (10 − targetRpe). Using `estimateOneRm(weight, reps)` instead skews the
+  // inferred 1RM and collapses heavier ladder rows toward single reps.
+  const reserve = 10 - targetRpe;
+  const failurePoint = Math.max(1, Math.round(anchorReps + reserve));
+  const pctAtFailure = percentageOfOneRm(failurePoint);
+  const oneRmKg =
+    pctAtFailure > 0 ? anchorKg / pctAtFailure : estimateOneRm(anchorKg, anchorReps);
+  if (!Number.isFinite(oneRmKg) || oneRmKg <= 0) {
+    return Array.from({ length: n }, () => Math.min(MAX_REPS, anchorReps));
+  }
+
+  const perLoadedRep: Array<number | null> = rowLoadsKgAdded.map((loadKg) => {
+    if (loadKg === null || !Number.isFinite(loadKg) || loadKg <= 0) {
+      return null;
+    }
+    const r = repsAtRpe(loadKg, oneRmKg, targetRpe);
+    if (r === null) return anchorReps;
+    return Math.min(MAX_REPS, Math.max(1, r));
+  });
+
+  let firstLoadedReps = anchorReps;
+  for (let i = 0; i < n; i += 1) {
+    const r = perLoadedRep[i];
+    if (r !== null) {
+      firstLoadedReps = r;
+      break;
+    }
+  }
+
+  return rowLoadsKgAdded.map((loadKg, i) => {
+    const loadedRep = perLoadedRep[i];
+    if (loadedRep !== null) return loadedRep;
+    const bumped = Math.ceil(firstLoadedReps * 1.2) + 2;
+    return Math.min(
+      MAX_REPS,
+      Math.max(firstLoadedReps + 1, bumped),
+    );
+  });
 }

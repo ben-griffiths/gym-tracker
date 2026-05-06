@@ -9,7 +9,7 @@
  * Also: `NEXT_PUBLIC_WEBLLM_LOG=0` build-time off, or `1` to force on.
  */
 
-import type { StorageBootstrapSnapshot } from "@/lib/webllm-storage-bootstrap";
+import type { StorageBootstrapSnapshot } from "@/lib/webllm/storage-bootstrap";
 
 const LS_KEY = "gym.webllm.log";
 
@@ -52,7 +52,7 @@ export function webllmLogProgress(
   lastProgressLogBucket = bucket;
   lastProgressLogTime = now;
   const pct = Math.round((report.progress || 0) * 100);
-   
+
   console.log(
     `[webllm] init progress ${pct}% (gen ${gen})`,
     (report.text || "").slice(0, 200),
@@ -73,12 +73,76 @@ type WebllmLogOpts = { force?: boolean };
 export function webllmLog(event: string, data?: LogData, opts?: WebllmLogOpts): void {
   if (opts?.force !== true && !isWebllmClientLogEnabled()) return;
   if (data && Object.keys(data).length) {
-     
+
     console.log(`[webllm] ${event}`, data);
   } else {
-     
+
     console.log(`[webllm] ${event}`);
   }
+}
+
+/**
+ * Logs workout-chat XML in a way that shows up reliably in Mobile Safari
+ * (Develop → your device): a `console.warn` line with the full string, not
+ * only a collapsible object from `console.log`.
+ */
+export function webllmLogRawWorkoutXml(
+  event: string,
+  xml: string,
+  meta?: LogData,
+): void {
+  const trimmed = xml.trim();
+  webllmLog(
+    event,
+    {
+      ...meta,
+      charLength: trimmed.length,
+    },
+    { force: true },
+  );
+
+  console.warn(`[webllm] ${event}\n${trimmed.length > 0 ? trimmed : "(empty)"}`);
+}
+
+/**
+ * Full `chat.completions.create` payload — same visibility as {@link webllmLogRawWorkoutXml}
+ * (`webllmLog` + `console.warn`) so Next dev / forward-logs shows it reliably.
+ */
+export function webllmLogChatCompletionsRequestFull(
+  event: string,
+  args: {
+    stream: boolean;
+    messages: ReadonlyArray<{ role: string; content: string }>;
+    temperature: number;
+    max_tokens: number;
+  },
+  meta?: LogData,
+): void {
+  const systemContent =
+    args.messages.find((m) => m.role === "system")?.content ?? "";
+  const userContent =
+    args.messages.find((m) => m.role === "user")?.content ?? "";
+  let json: string;
+  try {
+    json = JSON.stringify(args, null, 2);
+  } catch (err) {
+    json = `<stringify failed: ${String(err)}>`;
+  }
+  webllmLog(
+    event,
+    {
+      ...meta,
+      stream: args.stream,
+      temperature: args.temperature,
+      max_tokens: args.max_tokens,
+      systemCharLength: systemContent.length,
+      userCharLength: userContent.length,
+    },
+    { force: true },
+  );
+  console.warn(
+    `[webllm] ${event}\n--- JSON (exact create args) ---\n${json}\n--- system ---\n${systemContent.length > 0 ? systemContent : "(empty)"}\n--- user ---\n${userContent.length > 0 ? userContent : "(empty)"}`,
+  );
 }
 
 /**
@@ -88,7 +152,7 @@ export function webllmLog(event: string, data?: LogData, opts?: WebllmLogOpts): 
 export function webllmNotifyInspectorBoot(): void {
   if (typeof window === "undefined") return;
   // console.warn is shown when “Warnings” is enabled; harder to miss than .log
-   
+
   console.warn(
     "[webllm] WebLLM client script running — you should see [webllm] logs here. " +
       "Silence: localStorage.setItem('gym.webllm.log','0'); location.reload()",
@@ -143,6 +207,7 @@ export async function webllmLogEnvironmentDebug(
         gpu?: unknown;
       }
     ).gpu,
+    storagePersistAlready: storage.persistedAlready,
     storagePersisted: storage.persisted,
     storageUsageMB: storage.usageMB,
     storageQuotaMB: storage.quotaMB,
@@ -150,7 +215,7 @@ export async function webllmLogEnvironmentDebug(
     standalonePWA: window.matchMedia("(display-mode: standalone)").matches,
     gpuAdapter,
   };
-   
+
   console.log(`[webllm] environment (pre-load)`, data);
 }
 
@@ -158,10 +223,78 @@ export async function webllmLogEnvironmentDebug(
 export function webllmLogError(event: string, err: unknown, extra?: LogData): void {
   const message = err instanceof Error ? err.message : String(err);
   if (extra && Object.keys(extra).length) {
-     
+
     console.error(`[webllm] ${event}`, { ...extra, errorMessage: message });
   } else {
-     
+
     console.error(`[webllm] ${event}`, message);
+  }
+}
+
+/** Client-only support context lines to paste into bug reports. */
+function supportContextLines(): string[] {
+  if (typeof window === "undefined") {
+    return [`Time: ${new Date().toISOString()}`];
+  }
+  return [
+    `Time: ${new Date().toISOString()}`,
+    `Page: ${window.location.href}`,
+    `User-Agent: ${navigator.userAgent}`,
+    `WebGPU: ${"gpu" in navigator && navigator.gpu ? "yes" : "no"}`,
+  ];
+}
+
+/**
+ * Turn any thrown value into a short one-line summary plus a multi-line block
+ * suitable for screenshots or "Copy details" for the app developer.
+ */
+export function formatWebllmLoadError(err: unknown): {
+  summary: string;
+  detail: string;
+} {
+  const footer = ["", "---", "Support context:", ...supportContextLines()].join("\n");
+
+  if (err instanceof Error) {
+    const body = [`${err.name}: ${err.message}`];
+    if (err.stack) {
+      body.push("", "Stack trace:", err.stack);
+    }
+    const cause = err.cause;
+    if (cause !== undefined && cause !== null) {
+      body.push("", "Cause:");
+      if (cause instanceof Error) {
+        body.push(`${cause.name}: ${cause.message}`);
+        if (cause.stack) body.push(cause.stack);
+      } else {
+        body.push(String(cause));
+      }
+    }
+    const summary =
+      err.message.trim() ||
+      err.name ||
+      "Something went wrong while loading the on-device model.";
+    return {
+      summary,
+      detail: body.join("\n") + footer,
+    };
+  }
+
+  if (typeof err === "string") {
+    const s = err.trim() || "(empty error string)";
+    return {
+      summary: s.length > 200 ? `${s.slice(0, 197)}…` : s,
+      detail: s + footer,
+    };
+  }
+
+  try {
+    const json = JSON.stringify(err, null, 2);
+    return {
+      summary: json.slice(0, 160) + (json.length > 160 ? "…" : ""),
+      detail: json + footer,
+    };
+  } catch {
+    const s = String(err);
+    return { summary: s, detail: s + footer };
   }
 }

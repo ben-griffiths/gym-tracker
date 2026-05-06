@@ -41,6 +41,7 @@ import {
   type BlockSet,
 } from "@/components/workout/exercise-block-card";
 import { useWebllm } from "@/components/webllm/webllm-provider";
+import { webllmLogError } from "@/lib/webllm/client-log";
 import {
   createManySets,
   createSet,
@@ -52,13 +53,14 @@ import {
   updateSet,
 } from "@/lib/api";
 import { getExerciseByName, getExerciseBySlug } from "@/lib/exercises";
-import { planChatTurn } from "@/lib/chat-flow";
+import { planChatTurn } from "@/lib/workout-chat/chat-flow";
 import { toKg } from "@/lib/lift-profiles";
 import {
   estimateOneRm,
   prefillSetsFromEstimatedOneRm,
   percentageOfOneRm,
   repsAtRpe,
+  suggestRepsAnchoredLoadLadderAtRpe,
   suggestWeightsForSetSequence,
 } from "@/lib/rep-percentages";
 import {
@@ -70,6 +72,7 @@ import {
   oneRmKgToDisplayUnit,
   quickAddIncrement,
   rpeChipsRoundIncrement,
+  warmupWeightRoundIncrement,
   weightLoadIncrement,
 } from "@/lib/weight-increments";
 import {
@@ -93,13 +96,30 @@ import {
 } from "@/lib/workout-snapshot";
 import type {
   BlockOperation,
-  ChatContext,
+  ChatContextSnapshot,
   EffortFeel,
   ExerciseRecord,
   ExerciseWeightCandidate,
   SetDetail,
   SetUpdate,
+  WeightUnit,
 } from "@/lib/types/workout";
+
+/** {@link SetDetail} after chat-append weightUnit fallback (never null). */
+type SetDetailResolvedUnit = SetDetail & { weightUnit: WeightUnit };
+
+function looksAnchoredBwLoadLadderSuggestionSets(
+  parsedSets: Pick<SetDetail, "weight">[],
+): boolean {
+  if (parsedSets.length < 2) return false;
+  const w0 = parsedSets[0]?.weight;
+  if (w0 !== null && w0 !== undefined && w0 > 0) return false;
+  for (let i = 1; i < parsedSets.length; i += 1) {
+    const w = parsedSets[i]?.weight;
+    if (typeof w !== "number" || !Number.isFinite(w) || w <= 0) return false;
+  }
+  return true;
+}
 
 type ExerciseBlock = {
   id: string;
@@ -247,7 +267,7 @@ function WorkoutPageContent() {
   /** After the user expands a block, ignore auto-collapse briefly (scroll layout can misfire). */
   const autoCollapseIgnoreUntilRef = useRef(new Map<string, number>());
   // Sets the user typed before any exercise was named. Drained on the next
-  // turn that creates/activates a block (see lib/chat-flow.ts).
+  // turn that creates/activates a block (see lib/workout-chat/chat-flow.ts).
   const bufferedSetsRef = useRef<SetDetail[]>([]);
   /** State immediately before each user line (text or camera) was appended. */
   const snapshotBeforeUserMessageRef = useRef<
@@ -490,15 +510,21 @@ function WorkoutPageContent() {
   }
 
   const chatMutation = useMutation({
-    mutationFn: async (input: { message: string; context?: ChatContext }) => {
+    mutationFn: async (input: {
+      message: string;
+      context?: ChatContextSnapshot;
+    }) => {
       const engine =
         (await webllm.ensureEngineForChat()) ?? webllm.getEngine();
       if (!engine) {
-        const { parseFallbackSuggestion } = await import("@/lib/workout-parser");
-        return parseFallbackSuggestion(input.message, input.context);
+        const { emptyChatSuggestion } = await import("@/lib/workout-chat/empty-suggestion");
+        return emptyChatSuggestion(
+          input.message,
+          "I need the on-device model to read messages. Once it finishes loading, send that again and I'll pick it up.",
+        );
       }
-      const { runChatAgentWebLLM } = await import("@/lib/workout-chat-webllm");
-      const { suggestion } = await runChatAgentWebLLM(engine, {
+      const { runWorkoutChatDraft } = await import("@/lib/workout-chat/workout-chat-turn");
+      const { suggestion } = await runWorkoutChatDraft(engine, {
         message: input.message,
         context: input.context,
       });
@@ -1163,6 +1189,31 @@ function WorkoutPageContent() {
     }
   }
 
+  /** Chat suggestions may omit weightUnit; resolve before maths / API. */
+  function weightUnitFallbackForBlock(blockId: string): "kg" | "lb" {
+    const b = blocksRef.current[blockId];
+    if (b && b.sets.length > 0) {
+      return b.sets[b.sets.length - 1]!.weightUnit;
+    }
+    for (const block of Object.values(blocksRef.current)) {
+      if (block.deleted) continue;
+      const last = block.sets[block.sets.length - 1];
+      if (last) return last.weightUnit;
+    }
+    return "kg";
+  }
+
+  function resolveChatSetsWeightUnitsForBlock(
+    incoming: SetDetail[],
+    blockId: string,
+  ): SetDetailResolvedUnit[] {
+    const fallback = weightUnitFallbackForBlock(blockId);
+    return incoming.map((s) => ({
+      ...s,
+      weightUnit: s.weightUnit ?? fallback,
+    }));
+  }
+
   // If the block's last set is missing a value that this incoming set can
   // fill (and nothing conflicts), patch the existing set in place instead of
   // creating a new one. Returns true when a merge happened.
@@ -1200,9 +1251,9 @@ function WorkoutPageContent() {
     const nextReps = lastMissingReps && incomingHasReps ? incoming.reps : last.reps;
     const nextWeight =
       lastMissingWeight && incomingHasWeight ? incoming.weight : last.weight;
-    const nextUnit =
+    const nextUnit: "kg" | "lb" =
       lastMissingWeight && incomingHasWeight
-        ? incoming.weightUnit
+        ? (incoming.weightUnit ?? last.weightUnit)
         : last.weightUnit;
 
     // Fold in any effort the incoming set carries that the existing one
@@ -1271,22 +1322,28 @@ function WorkoutPageContent() {
 
   async function appendSetsToBlock(
     blockId: string,
-    sets: SetDetail[],
+    incomingSets: SetDetail[],
     source: "manual" | "camera" | "chat",
     hintMessage?: string,
+    appendOptions?: {
+      startingSetNumber?: number;
+      skipMergeIntoLast?: boolean;
+      insertBeforeExisting?: boolean;
+    },
   ) {
+    const sets = resolveChatSetsWeightUnitsForBlock(incomingSets, blockId);
     const block = blocksRef.current[blockId];
+    const incomingNeedsPrefillHint = sets.some((set) => {
+      const repsOk =
+        typeof set.reps === "number" &&
+        Number.isFinite(set.reps) &&
+        set.reps > 0;
+      const weightMissing =
+        set.weight === null || set.weight === undefined;
+      return !repsOk || weightMissing;
+    });
     const canAutoPrefill =
-      source === "chat" &&
-      Boolean(block) &&
-      (block?.sets.length ?? 0) === 0 &&
-      sets.some(
-        (set) =>
-          set.reps === null ||
-          set.reps === undefined ||
-          set.weight === null ||
-          set.weight === undefined,
-      );
+      source === "chat" && Boolean(block) && incomingNeedsPrefillHint;
 
     const estimateOneRmProfileForExercise = (
       exerciseSlug: string,
@@ -1336,16 +1393,83 @@ function WorkoutPageContent() {
       canAutoPrefill && block
         ? (() => {
             const profile = estimateOneRmProfileForExercise(block.exercise.slug);
-            if (!profile) return sets;
-            // Prefer the rep target the user just asked for in THIS message
-            // (e.g. "3 heavy 5s") when filling missing reps, rather than
-            // defaulting to a historic PR rep-count like 1.
+
             const messageReps = sets
               .map((set) => set.reps)
               .filter(
                 (reps): reps is number =>
                   typeof reps === "number" && Number.isFinite(reps) && reps > 0,
               );
+
+            const parserHadExplicitLoads = sets.some(
+              (s) =>
+                typeof s.weight === "number" &&
+                Number.isFinite(s.weight) &&
+                s.weight > 0,
+            );
+
+            const anchoredBwLoadLadder =
+              parserHadExplicitLoads &&
+              looksAnchoredBwLoadLadderSuggestionSets(sets);
+
+            // Strength-Level anchored reps only need the kg ladder + a top-set rep
+            // target — no logged 1RM history.
+            if (!profile && anchoredBwLoadLadder) {
+              const defaultAnchorReps =
+                messageReps.length > 0
+                  ? Math.round(
+                      messageReps.reduce((sum, r) => sum + r, 0) /
+                        messageReps.length,
+                    )
+                  : 8;
+
+              const lastParsed = sets[sets.length - 1];
+              const explicitTop =
+                typeof lastParsed?.reps === "number" &&
+                Number.isFinite(lastParsed.reps) &&
+                lastParsed.reps > 0;
+              const anchorReps = explicitTop
+                ? Math.round(lastParsed.reps as number)
+                : defaultAnchorReps;
+
+              const adjusted = sets.map((set, index) => {
+                const original = sets[index];
+                if (
+                  original &&
+                  (original.weight === null ||
+                    original.weight === undefined ||
+                    original.weight <= 0)
+                ) {
+                  return {
+                    ...set,
+                    weight: null,
+                  };
+                }
+                return set;
+              });
+
+              const loadsKg = adjusted.map((s) => {
+                if (s.weight === null || s.weight === undefined || s.weight <= 0) {
+                  return null;
+                }
+                return toKg(s.weight, s.weightUnit);
+              });
+
+              const repsCol = suggestRepsAnchoredLoadLadderAtRpe(loadsKg, {
+                anchorReps,
+                targetRpe: 8,
+              });
+
+              return adjusted.map((set, i) => ({
+                ...set,
+                reps: repsCol[i] ?? set.reps,
+              }));
+            }
+
+            if (!profile) return sets;
+            // Prefer the rep target the user just asked for in THIS message
+            // (e.g. "3 heavy 5s") when filling missing reps, rather than
+            // defaulting to a historic PR rep-count like 1.
             const defaultReps =
               messageReps.length > 0
                 ? Math.round(
@@ -1362,13 +1486,66 @@ function WorkoutPageContent() {
               defaultReps,
             });
 
-            const hasMissingWeight = repFilled.some(
-              (set) => set.weight === null || set.weight === undefined || set.weight <= 0,
+            let adjustedRepFilled = repFilled;
+            if (parserHadExplicitLoads) {
+              adjustedRepFilled = repFilled.map((set, index) => {
+                const original = sets[index];
+                if (
+                  original &&
+                  (original.weight === null ||
+                    original.weight === undefined ||
+                    original.weight <= 0)
+                ) {
+                  return {
+                    ...set,
+                    weight: null,
+                  };
+                }
+                return set;
+              });
+            }
+
+            if (
+              parserHadExplicitLoads &&
+              looksAnchoredBwLoadLadderSuggestionSets(sets)
+            ) {
+              const lastParsed = sets[sets.length - 1];
+              const explicitTop =
+                typeof lastParsed?.reps === "number" &&
+                Number.isFinite(lastParsed.reps) &&
+                lastParsed.reps > 0;
+              const anchorReps = explicitTop
+                ? Math.round(lastParsed.reps as number)
+                : defaultReps;
+
+              const loadsKg = adjustedRepFilled.map((s) => {
+                if (s.weight === null || s.weight === undefined || s.weight <= 0) {
+                  return null;
+                }
+                return toKg(s.weight, s.weightUnit);
+              });
+
+              const repsCol = suggestRepsAnchoredLoadLadderAtRpe(loadsKg, {
+                anchorReps,
+                targetRpe: 8,
+              });
+
+              adjustedRepFilled = adjustedRepFilled.map((set, i) => ({
+                ...set,
+                reps: repsCol[i] ?? set.reps,
+              }));
+            }
+
+            const hasMissingWeight = adjustedRepFilled.some(
+              (set) =>
+                set.weight === null ||
+                set.weight === undefined ||
+                set.weight <= 0,
             );
-            if (!hasMissingWeight) return repFilled;
+            if (!hasMissingWeight) return adjustedRepFilled;
 
             const kgSequence = suggestWeightsForSetSequence(
-              repFilled.map((set) => ({ reps: set.reps })),
+              adjustedRepFilled.map((set) => ({ reps: set.reps })),
               profile.oneRmKg,
               {
                 targetRpe: 8,
@@ -1378,16 +1555,41 @@ function WorkoutPageContent() {
               },
             );
             const kgPerLb = 0.45359237;
-            const increment = 5;
 
-            return repFilled.map((set, index) => {
+            return adjustedRepFilled.map((set, index) => {
               if (set.weight !== null && set.weight !== undefined && set.weight > 0) {
                 return set;
               }
+              if (
+                parserHadExplicitLoads &&
+                sets[index] &&
+                (sets[index]!.weight === null ||
+                  sets[index]!.weight === undefined ||
+                  sets[index]!.weight <= 0)
+              ) {
+                return { ...set, weight: null };
+              }
               const kg = kgSequence[index];
               if (kg === null || kg <= 0) return set;
-              const inUnit = set.weightUnit === "lb" ? kg / kgPerLb : kg;
-              const rounded = Math.round(inUnit / increment) * increment;
+              const u = set.weightUnit;
+              const oneRmInUnit = oneRmKgToDisplayUnit(profile.oneRmKg, u);
+              const fullInc = weightLoadIncrement(oneRmInUnit, u);
+              const workingInc = rpeChipsRoundIncrement(
+                oneRmInUnit,
+                u,
+                fullInc,
+              );
+              const warmupInc = warmupWeightRoundIncrement(profile.oneRmKg, u);
+              const increment =
+                warmupSets > 0 && index < warmupSets ? warmupInc : workingInc;
+              const inUnit = u === "lb" ? kg / kgPerLb : kg;
+              const rounded =
+                warmupSets > 0 && index < warmupSets
+                  ? Math.max(
+                      increment,
+                      Math.floor(inUnit / increment + 1e-9) * increment,
+                    )
+                  : Math.round(inUnit / increment) * increment;
               if (rounded <= 0) return set;
               return { ...set, weight: rounded };
             });
@@ -1395,6 +1597,7 @@ function WorkoutPageContent() {
         : sets;
 
     const mergedFirst =
+      appendOptions?.skipMergeIntoLast !== true &&
       normalizedSets.length > 0 &&
       (await maybeMergeIntoLastSet(blockId, normalizedSets[0]!));
     const toCreate = mergedFirst ? normalizedSets.slice(1) : normalizedSets;
@@ -1409,7 +1612,10 @@ function WorkoutPageContent() {
     const blockAfter = blocksRef.current[blockId];
     if (!blockAfter) return;
 
-    const startNum = blockAfter.sets.length + 1;
+    const startNum =
+      appendOptions?.startingSetNumber !== undefined
+        ? appendOptions.startingSetNumber
+        : blockAfter.sets.length + 1;
 
     try {
       const response = await createManySets({
@@ -1424,6 +1630,7 @@ function WorkoutPageContent() {
           rpe: set.rpe ?? null,
           rir: set.rir ?? null,
           feel: set.feel ?? null,
+          isWarmup: set.isWarmup === true,
         })),
       });
 
@@ -1436,19 +1643,63 @@ function WorkoutPageContent() {
         weight: set.weight,
         weightUnit: set.weightUnit,
         source,
+        isWarmup: set.isWarmup === true,
         rpe: set.rpe ?? null,
         rir: set.rir ?? null,
         feel: set.feel ?? null,
       }));
 
+      const combinedSets =
+        appendOptions?.insertBeforeExisting === true
+          ? [...newSets, ...blockAfter.sets]
+          : [...blockAfter.sets, ...newSets];
+
       commitBlocks({
         ...blocksRef.current,
-        [blockId]: { ...blockAfter, sets: [...blockAfter.sets, ...newSets] },
+        [blockId]: { ...blockAfter, sets: combinedSets },
       });
 
     } catch {
       toast.error("Could not log sets");
     }
+  }
+
+  async function prependSetsToBlock(
+    blockId: string,
+    sets: SetDetail[],
+    source: "manual" | "camera" | "chat",
+    hintMessage?: string,
+  ) {
+    const block = blocksRef.current[blockId];
+    if (!block || sets.length === 0) return;
+
+    const shift = sets.length;
+    const sortedDesc = [...block.sets].sort((a, b) => b.setNumber - a.setNumber);
+
+    await Promise.all(
+      sortedDesc.map((row) =>
+        row.dbId
+          ? updateSet(row.dbId, { setNumber: row.setNumber + shift }).catch(
+              () => undefined,
+            )
+          : Promise.resolve(),
+      ),
+    );
+
+    const renumberedAsc = [...block.sets]
+      .sort((a, b) => a.setNumber - b.setNumber)
+      .map((s) => ({ ...s, setNumber: s.setNumber + shift }));
+
+    commitBlocks({
+      ...blocksRef.current,
+      [blockId]: { ...block, sets: renumberedAsc },
+    });
+
+    await appendSetsToBlock(blockId, sets, source, hintMessage, {
+      startingSetNumber: 1,
+      skipMergeIntoLast: true,
+      insertBeforeExisting: true,
+    });
   }
 
   /**
@@ -1492,7 +1743,9 @@ function WorkoutPageContent() {
    * set in the given block (active by default) that already has a rep
    * count but no weight, compute the working weight via the same RPE
    * table the chips use, then round to the closest gym-friendly
-   * increment (5kg / 5lb).
+   * increment (warmups: same tier step as the card’s load jumps via
+   * `warmupWeightRoundIncrement`, floored so a coarse step doesn’t snap up past working;
+   * working sets: same RPE chip rounding as the exercise card).
    *
    * Prefers explicit `warmupSets` / `warmupStartPct` from the server
    * action (already parsed from the user's message) so we don't
@@ -1510,6 +1763,7 @@ function WorkoutPageContent() {
       warmupStartPct?: number;
       hintMessage?: string;
       targetBlockId?: string;
+      preserveExistingWorkingLoads?: boolean;
     },
   ): Promise<{ changed: number; hadOneRm: boolean }> {
     const activeId = overrides?.targetBlockId ?? activeBlockIdRef.current;
@@ -1522,7 +1776,6 @@ function WorkoutPageContent() {
     if (oneRmKg === null || oneRmKg <= 0) {
       return { changed: 0, hadOneRm: false };
     }
-    const increment = 5;
     const lbPerKg = 1 / 0.45359237;
 
     const parsed = parseWarmupHints(overrides?.hintMessage);
@@ -1535,6 +1788,53 @@ function WorkoutPageContent() {
       DEFAULT_WARMUP_START_PCT;
 
     const warmupMode = warmupSets > 0;
+
+    const preserveExisting = overrides?.preserveExistingWorkingLoads === true;
+    if (preserveExisting && warmupSets > 0) {
+      const sequenceFull = suggestWeightsForSetSequence(
+        block.sets.map((s) => ({ reps: s.reps })),
+        oneRmKg,
+        {
+          targetRpe,
+          warmupSets,
+          warmupStartPct,
+        },
+      );
+
+      const updatesPreserve: SetUpdate[] = [];
+      const cap = Math.min(warmupSets, block.sets.length);
+      for (let i = 0; i < cap; i += 1) {
+        const setEntry = block.sets[i]!;
+        if (setEntry.reps === null || setEntry.reps <= 0) continue;
+        if (setEntry.weight !== null && setEntry.weight > 0) continue;
+
+        const recommendedKg = sequenceFull[i];
+        if (recommendedKg === null || recommendedKg <= 0) continue;
+        const recommendedInUnit =
+          setEntry.weightUnit === "lb"
+            ? recommendedKg * lbPerKg
+            : recommendedKg;
+        const u = setEntry.weightUnit;
+        const warmupInc = warmupWeightRoundIncrement(oneRmKg, u);
+        const rounded = Math.max(
+          warmupInc,
+          Math.floor(recommendedInUnit / warmupInc + 1e-9) * warmupInc,
+        );
+        if (rounded <= 0) continue;
+        updatesPreserve.push({
+          targetSetNumbers: [setEntry.setNumber],
+          weight: rounded,
+          weightUnit: setEntry.weightUnit,
+        });
+      }
+      if (updatesPreserve.length === 0) return { changed: 0, hadOneRm: true };
+      const changedPreserve = await applyUpdatesToBlock(
+        activeId,
+        updatesPreserve,
+      );
+      return { changed: changedPreserve, hadOneRm: true };
+    }
+
     const fillable = block.sets.filter((setEntry) => {
       if (setEntry.reps === null || setEntry.reps <= 0) return false;
       // Warmup requests should be allowed to re-shape existing weights so
@@ -1560,7 +1860,20 @@ function WorkoutPageContent() {
       if (recommendedKg === null || recommendedKg <= 0) continue;
       const recommendedInUnit =
         setEntry.weightUnit === "lb" ? recommendedKg * lbPerKg : recommendedKg;
-      const rounded = Math.round(recommendedInUnit / increment) * increment;
+      const u = setEntry.weightUnit;
+      const oneRmInUnit = oneRmKgToDisplayUnit(oneRmKg, u);
+      const fullInc = weightLoadIncrement(oneRmInUnit, u);
+      const workingInc = rpeChipsRoundIncrement(oneRmInUnit, u, fullInc);
+      const warmupInc = warmupWeightRoundIncrement(oneRmKg, u);
+      const increment =
+        warmupMode && i < warmupSets ? warmupInc : workingInc;
+      const rounded =
+        warmupMode && i < warmupSets
+          ? Math.max(
+              increment,
+              Math.floor(recommendedInUnit / increment + 1e-9) * increment,
+            )
+          : Math.round(recommendedInUnit / increment) * increment;
       if (rounded <= 0) continue;
       if (!warmupMode && setEntry.weight !== null && setEntry.weight > 0) {
         continue;
@@ -1681,7 +1994,7 @@ function WorkoutPageContent() {
     return feedback;
   }
 
-  function buildChatContext(): ChatContext | undefined {
+  function buildChatContext(): ChatContextSnapshot | undefined {
     const orderedBlocks = messagesRef.current
       .filter(
         (entry): entry is Extract<Message, { kind: "exercise-block" }> =>
@@ -1708,6 +2021,7 @@ function WorkoutPageContent() {
         rpe: set.rpe ?? null,
         rir: set.rir ?? null,
         feel: set.feel ?? null,
+        isWarmup: set.isWarmup === true,
       })),
       blocks: orderedBlocks.map((block) => ({
         exerciseSlug: block.exercise.slug,
@@ -1721,6 +2035,7 @@ function WorkoutPageContent() {
           rpe: set.rpe ?? null,
           rir: set.rir ?? null,
           feel: set.feel ?? null,
+          isWarmup: set.isWarmup === true,
         })),
       })),
     };
@@ -1738,9 +2053,15 @@ function WorkoutPageContent() {
       text: message,
     });
 
+    const chatCtx = buildChatContext();
     const suggestion = await chatMutation
-      .mutateAsync({ message, context: buildChatContext() })
-      .catch(() => null);
+      .mutateAsync({ message, context: chatCtx })
+      .catch((err) => {
+        webllmLogError("workout chat: mutateAsync failed", err, {
+          messagePreview: message.slice(0, 120),
+        });
+        return null;
+      });
     if (!suggestion) {
       appendMessage({
         id: makeId("msg"),
@@ -1758,9 +2079,19 @@ function WorkoutPageContent() {
       activeForPlan && !activeForPlan.deleted
         ? activeForPlan.sets.length
         : 0;
+    const hasActiveBlockId = Boolean(activeBlockIdRef.current);
+    const hasLoggedBlocksInChat = Boolean(
+      chatCtx?.blocks?.some((b) => b.sets.length > 0),
+    );
+    const prependWarmupNeedsImplicitTarget =
+      Boolean(suggestion?.prependSetsToActiveBlock) &&
+      (suggestion?.sets?.length ?? 0) > 0;
+
     const actions = planChatTurn({
       suggestion,
-      hasActiveBlock: Boolean(activeBlockIdRef.current),
+      hasActiveBlock:
+        hasActiveBlockId ||
+        (prependWarmupNeedsImplicitTarget && hasLoggedBlocksInChat),
       activeBlockSetCount: activeSetCount,
       bufferedSets: bufferedSetsRef.current,
     });
@@ -1833,6 +2164,37 @@ function WorkoutPageContent() {
           }
           break;
         }
+        case "prependToActiveBlock": {
+          let targetId = activeBlockIdRef.current;
+          if (!targetId) {
+            const blockMsgs = messagesRef.current.filter(
+              (entry): entry is Extract<Message, { kind: "exercise-block" }> =>
+                entry.kind === "exercise-block",
+            );
+            for (let i = blockMsgs.length - 1; i >= 0; i--) {
+              const bid = blockMsgs[i]!.blockId;
+              const b = blocksRef.current[bid];
+              if (b && !b.deleted && b.sets.length > 0) {
+                targetId = bid;
+                break;
+              }
+            }
+          }
+          if (targetId && action.sets.length > 0) {
+            if (!activeBlockIdRef.current) {
+              commitActiveBlockId(targetId);
+              collapseOthers(targetId);
+            }
+            await prependSetsToBlock(targetId, action.sets, "chat", message);
+            const name =
+              blocksRef.current[targetId]?.exercise.name ?? "exercise";
+            pushAssistantText(
+              `Added ${action.sets.length} ${action.sets.length === 1 ? "set" : "sets"} to ${name}.`,
+            );
+          }
+          bufferedSetsRef.current = [];
+          break;
+        }
         case "appendToActiveBlock": {
           const activeId = activeBlockIdRef.current;
           if (activeId) {
@@ -1896,6 +2258,8 @@ function WorkoutPageContent() {
               warmupStartPct: action.warmupStartPct,
               hintMessage: message,
               targetBlockId: blockId,
+              preserveExistingWorkingLoads:
+                action.preserveExistingWorkingLoads,
             });
             totalChanged += result.changed;
             anyHadOneRm = anyHadOneRm || result.hadOneRm;
@@ -1963,6 +2327,30 @@ function WorkoutPageContent() {
               pushAssistantText(
                 `Already at ${action.keepCount} ${action.keepCount === 1 ? "set" : "sets"} on ${name}.`,
               );
+            }
+          }
+          break;
+        }
+        case "removeSetsFromActiveBlock": {
+          const activeId = activeBlockIdRef.current;
+          if (activeId) {
+            const block = blocksRef.current[activeId];
+            if (block) {
+              const ids = block.sets
+                .filter((s) => action.setNumbers.includes(s.setNumber))
+                .map((s) => s.id);
+              const name = block.exercise.name;
+              for (const id of ids) {
+                removeSetFromBlock(activeId, id);
+              }
+              if (ids.length > 0) {
+                void scheduleTranscriptSave();
+                pushAssistantText(
+                  `Removed ${ids.length} ${ids.length === 1 ? "set" : "sets"} from ${name}.`,
+                );
+              } else {
+                pushAssistantText("No sets matched that removal.");
+              }
             }
           }
           break;

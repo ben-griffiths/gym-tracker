@@ -22,6 +22,8 @@ export type BlockSet = {
   weight: number | null;
   weightUnit: "kg" | "lb";
   source: "manual" | "camera" | "chat";
+  /** Warmup rows from chat / prescription; drives softer row styling. */
+  isWarmup?: boolean;
   rpe?: number | null;
   rir?: number | null;
   feel?: EffortFeel | null;
@@ -255,11 +257,19 @@ export function ExerciseBlockCard({
                       aria-hidden
                     />
                   ) : null}
-                  <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm tabular-nums">
+                  <div
+                    className={cn(
+                      "flex items-center justify-between gap-3 px-4 py-2.5 text-sm tabular-nums",
+                      set.isWarmup &&
+                        "bg-muted/40 text-muted-foreground dark:bg-muted/25",
+                    )}
+                  >
                   <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                     <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-[11px] font-semibold">
                       {set.setNumber}
                     </span>
+                    {/* Explicit space so row textContent isn’t e.g. "15 reps" from "1"+"5 reps". */}
+                    {" "}
                     <span className="text-foreground">{repsLabel}</span>
                     <span className="text-muted-foreground">·</span>
                     <span className="text-foreground">{weightLabel}</span>

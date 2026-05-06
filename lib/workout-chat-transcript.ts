@@ -57,7 +57,7 @@ const setDetailSchema: z.ZodType<SetDetail> = z.object({
   setNumber: z.number(),
   reps: z.number().nullable(),
   weight: z.number().nullable(),
-  weightUnit: z.enum(["kg", "lb"]),
+  weightUnit: z.enum(["kg", "lb"]).nullable(),
   rpe: z.number().nullable().optional(),
   rir: z.number().nullable().optional(),
   feel: z.enum(["easy", "medium", "hard"]).nullable().optional(),

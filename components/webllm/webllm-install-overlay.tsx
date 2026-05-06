@@ -13,7 +13,14 @@ import { useWebllm } from "@/components/webllm/webllm-provider";
  * moment the engine reports `ready`.
  */
 export function WebllmInstallOverlay() {
-  const { status, progress, errorMessage, errorDetail, retry } = useWebllm();
+  const {
+    status,
+    progress,
+    errorMessage,
+    errorDetail,
+    retry,
+    storagePersistenceHint,
+  } = useWebllm();
   if (status !== "loading" && status !== "error") return null;
 
   const isError = status === "error";
@@ -50,6 +57,11 @@ export function WebllmInstallOverlay() {
             ? "We tried 3 times and couldn't finish setting up the on-device model. Check your connection and try again."
             : "One-time setup. Your phone is downloading and caching the model so chat works offline. Stay on this screen — Wi-Fi is best."}
         </p>
+        {storagePersistenceHint && !isError ? (
+          <p className="max-w-sm rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            {storagePersistenceHint}
+          </p>
+        ) : null}
       </div>
 
       {isError ? (

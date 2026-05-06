@@ -14,19 +14,21 @@ import {
 import type { MLCEngineInterface } from "@mlc-ai/web-llm";
 import {
   isWebGPUSupported,
+  isLikelyMobileWebLLMClient,
   prefersLowResourceWebLLM,
   requiresIOSPWAInstallForWebLLM,
-} from "@/lib/webllm-capability";
+} from "@/lib/webllm/capability";
 import {
   resolveWebLLMChatOptions,
   resolveWebLLMModelId,
-} from "@/lib/webllm-config";
-import { clearLastWebllmInitProgress, recordLastWebllmInitProgress } from "@/lib/webllm-init-progress-last";
-import { loadPreferredWebllmEngine } from "@/lib/webllm-engine-loader";
-import { bootstrapWebLLMStorage } from "@/lib/webllm-storage-bootstrap";
+} from "@/lib/webllm/config";
 import {
+  clearLastWebllmInitProgress,
   classifyWebllmInitProgressPhase,
-} from "@/lib/webllm-progress-phase";
+  recordLastWebllmInitProgress,
+} from "@/lib/webllm/init-progress";
+import { loadPreferredWebllmEngine } from "@/lib/webllm/engine-loader";
+import { bootstrapWebLLMStorage } from "@/lib/webllm/storage-bootstrap";
 import {
   allowAutoloadAgain,
   clearInflightAfterEngineCreate,
@@ -35,15 +37,16 @@ import {
   isAutoloadSkipped,
   setInflightBeforeEngineCreate,
   WEBLLM_LOAD_GATE_MESSAGE,
-} from "@/lib/webllm-load-session";
+} from "@/lib/webllm/load-session";
 import {
+  formatWebllmLoadError,
   webllmLog,
   webllmLogEnvironmentDebug,
   webllmLogError,
   webllmLogProgress,
   webllmLogResetProgressThrottle,
   webllmNotifyInspectorBoot,
-} from "@/lib/webllm-client-log";
+} from "@/lib/webllm/client-log";
 import {
   webllmDiagBeginLoad,
   webllmDiagOnLoadEnd,
@@ -51,8 +54,7 @@ import {
   webllmDiagSetPreloadContext,
   webllmDiagUploadIfInflightOnBoot,
   webllmDiagUploadJsError,
-} from "@/lib/webllm-diagnostics";
-import { formatWebllmLoadError } from "@/lib/webllm-format-error";
+} from "@/lib/webllm/diagnostics";
 
 export type WebllmLoadStatus =
   | "idle"
@@ -89,6 +91,11 @@ type WebllmContextValue = {
   retry: () => void;
   /** Start the download+compile (awaiting_tap / idle prefetch) */
   startModelLoad: () => void;
+  /**
+   * Shown during install overlay on mobile when `persist()` wasn’t granted so the user knows
+   * re-download may happen after storage pressure — null otherwise.
+   */
+  storagePersistenceHint: string | null;
 };
 
 const WebllmContext = createContext<WebllmContextValue | null>(null);
@@ -131,6 +138,9 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [clientReady, setClientReady] = useState(false);
+  const [storagePersistenceHint, setStoragePersistenceHint] = useState<string | null>(
+    null,
+  );
   const engineRef = useRef<MLCEngineInterface | null>(null);
   const loadGenRef = useRef(0);
   const statusRef = useRef<WebllmLoadStatus>(status);
@@ -207,8 +217,27 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     setProgress(null);
     setErrorMessage(null);
     setErrorDetail(null);
+    setStoragePersistenceHint(null);
 
     try {
+      webllmLog("runLoad: storage bootstrap…", { gen }, { force: true });
+      const storageBootstrap = await bootstrapWebLLMStorage();
+      if (
+        isLikelyMobileWebLLMClient() &&
+        storageBootstrap.persistedAlready !== true &&
+        storageBootstrap.persisted === false
+      ) {
+        setStoragePersistenceHint(
+          "Long-term storage wasn't granted—you may need to set up AI again after the browser frees space. Add this app to your Home Screen for more reliable caching.",
+        );
+      }
+      webllmDiagSetPreloadContext({
+        ...storageBootstrap,
+        crossOriginIsolated:
+          typeof window !== "undefined" ? window.crossOriginIsolated : null,
+      });
+      await webllmLogEnvironmentDebug(storageBootstrap, { force: true });
+
       webllmLog("runLoad: importing @mlc-ai/web-llm…");
       const webllm = await import("@mlc-ai/web-llm");
       webllmLog("runLoad: web-llm module loaded");
@@ -218,13 +247,6 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
         modelId,
         hasContextOverride: chatOpts != null,
       });
-      const storageBootstrap = await bootstrapWebLLMStorage();
-      webllmDiagSetPreloadContext({
-        ...storageBootstrap,
-        crossOriginIsolated:
-          typeof window !== "undefined" ? window.crossOriginIsolated : null,
-      });
-      await webllmLogEnvironmentDebug(storageBootstrap, { force: true });
       const contextWindow =
         chatOpts && typeof (chatOpts as { context_window_size?: number }).context_window_size ===
         "number"
@@ -326,6 +348,7 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       engineRef.current = engine;
       setTrackedStatus("ready");
       setProgress(null);
+      setStoragePersistenceHint(null);
       clearLastWebllmInitProgress();
       webllmLog("runLoad: success, status=ready", { modelId, gen });
       webllmDiagOnLoadEnd("ready");
@@ -333,6 +356,18 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       if (gen !== loadGenRef.current) return false;
       clearInflightAfterEngineCreate();
+      if (isLikelyMobileWebLLMClient()) {
+        void bootstrapWebLLMStorage().then((snap) => {
+          webllmLog(
+            "storage: re-request persist() after load failure",
+            {
+              persistedAlready: snap.persistedAlready,
+              persisted: snap.persisted,
+            },
+            { force: true },
+          );
+        });
+      }
       const { summary, detail } = formatWebllmLoadError(err);
       webllmLogError("runLoad: catch (load failed)", err, { gen });
       webllmDiagUploadJsError(summary);
@@ -429,6 +464,37 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
   }, [runLoad, setTrackedStatus]);
 
   /**
+   * Request durable storage early on phones/tablets before the large Cache Storage
+   * writes from WebLLM, so eviction under pressure is less likely. Desktop skips
+   * this (harmless duplicates if run anyway). Autoload runs the same bootstrap
+   * again right before download — redundancy is intentional.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined" || !clientReady) return;
+    if (!isWebGPUSupported()) return;
+    if (!isLikelyMobileWebLLMClient()) return;
+
+    void (async () => {
+      const snap = await bootstrapWebLLMStorage();
+      webllmLog(
+        "storage: mobile prime (persist before model download)",
+        {
+          persistedAlready: snap.persistedAlready,
+          persisted: snap.persisted,
+          quotaMB: snap.quotaMB,
+          usageMB: snap.usageMB,
+        },
+        { force: true },
+      );
+      webllmDiagSetPreloadContext({
+        ...snap,
+        crossOriginIsolated:
+          typeof window !== "undefined" ? window.crossOriginIsolated : null,
+      });
+    })();
+  }, [clientReady]);
+
+  /**
    * Eager autoload on first paint so the user never has to tap a "Load model"
    * button. We only kick this off from `idle` — `unsupported`,
    * `requires_pwa_install`, and the crash-recovery skip path are all left
@@ -477,7 +543,16 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo((): WebllmContextValue => {
-    const chatSendBlocked = status === "loading" || status === "error";
+    const forceParserChat =
+      typeof window !== "undefined" &&
+      (
+        window as Window & {
+          __PLAYWRIGHT_FORCE_PARSER_CHAT__?: boolean;
+        }
+      ).__PLAYWRIGHT_FORCE_PARSER_CHAT__ === true;
+    const chatSendBlocked = forceParserChat
+      ? false
+      : status === "loading" || status === "error";
     return {
       status,
       progress,
@@ -488,12 +563,14 @@ export function WebllmProvider({ children }: { children: ReactNode }) {
       ensureEngineForChat,
       retry,
       startModelLoad,
+      storagePersistenceHint,
     };
   }, [
     status,
     progress,
     errorMessage,
     errorDetail,
+    storagePersistenceHint,
     getEngine,
     ensureEngineForChat,
     retry,

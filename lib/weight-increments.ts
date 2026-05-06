@@ -139,6 +139,20 @@ export function quickAddIncrement(
   return forRpe <= forPlus ? forRpe : forPlus;
 }
 
+/**
+ * Step size for rounding **warmup** suggestions: same tier as the exercise card’s
+ * load jumps (`weightLoadIncrement` / quick-adjust buttons). Warmups stay on “whole
+ * jumps” (e.g. 20 kg for typical bench 1RM bands) instead of halving down to 5 kg
+ * plate math — easier to load what’s already on the bar between sets.
+ */
+export function warmupWeightRoundIncrement(
+  oneRmKg: number,
+  unit: "kg" | "lb",
+): number {
+  const oneRmInUnit = oneRmKgToDisplayUnit(oneRmKg, unit);
+  return weightLoadIncrement(oneRmInUnit, unit);
+}
+
 export function formatLoadIncrement(inc: number): string {
   if (Number.isInteger(inc)) return String(inc);
   if (Number.isInteger(inc * 2)) return (Math.round(inc * 2) / 2).toString();

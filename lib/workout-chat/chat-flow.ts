@@ -1,3 +1,5 @@
+import { tryParseSetCountTrimRequest } from "@/lib/workout-chat/heuristics";
+export { tryParseSetCountTrimRequest } from "@/lib/workout-chat/heuristics";
 import type {
   BlockOperation,
   ChatSetSuggestion,
@@ -49,6 +51,7 @@ export type ChatAction =
       targetRpe: number;
       warmupSets?: number;
       warmupStartPct?: number;
+      preserveExistingWorkingLoads?: boolean;
       /**
        * Which exercise blocks to scale. When omitted, the active block
        * is scaled. When provided (multi-exercise turns like "bench, dips,
@@ -57,6 +60,7 @@ export type ChatAction =
        */
       exerciseSlugs?: string[];
     }
+  | { type: "prependToActiveBlock"; sets: SetDetail[] }
   | {
       type: "showPicker";
       options: ExerciseRecord[];
@@ -69,37 +73,10 @@ export type ChatAction =
       exerciseSlug: string;
       mode: "instructions" | "description";
     }
-  | { type: "trimActiveBlockToCount"; keepCount: number };
+  | { type: "trimActiveBlockToCount"; keepCount: number }
+  | { type: "removeSetsFromActiveBlock"; setNumbers: number[] };
 
 const MAX_PICKER_OPTIONS = 5;
-
-/**
- * If the user is correcting the *number* of sets (e.g. "actually it should
- * be just 5 sets"), return the count they want. Must not fire for bare
- * "5 reps" without a set-count phrase.
- */
-export function tryParseSetCountTrimRequest(message: string): number | null {
-  const t = message.trim();
-  if (!/set|sets/i.test(t)) return null;
-  const mJust =
-    /\b(?:just|only|exactly)\s+(\d{1,2})\s*sets?\b/i.exec(t) ??
-    /\b(\d{1,2})\s*sets?\s*(?:only|total|in total|max)\b/i.exec(t);
-  if (mJust) {
-    const n = Number(mJust[1]);
-    if (Number.isInteger(n) && n >= 1 && n <= 100) return n;
-  }
-  const mShould = /\bshould\s+be\s+(\d{1,2})\s*sets?\b/i.exec(t);
-  if (mShould) {
-    const n = Number(mShould[1]);
-    if (Number.isInteger(n) && n >= 1 && n <= 100) return n;
-  }
-  const mWant = /\b(?:meant|want|need|have)\s+(\d{1,2})\s*sets?\b/i.exec(t);
-  if (mWant) {
-    const n = Number(mWant[1]);
-    if (Number.isInteger(n) && n >= 1 && n <= 100) return n;
-  }
-  return null;
-}
 
 export function planChatTurn(input: ChatFlowInput): ChatAction[] {
   const {
@@ -113,6 +90,7 @@ export function planChatTurn(input: ChatFlowInput): ChatAction[] {
   const hasBlockOps = suggestion.blockOperations.length > 0;
   const hasBuffered = bufferedSets.length > 0;
   const autoExercise = suggestion.autoResolvedExercise;
+  const removeNums = suggestion.removeSetsAtNumbers ?? [];
 
   const actions: ChatAction[] = [];
 
@@ -140,6 +118,44 @@ export function planChatTurn(input: ChatFlowInput): ChatAction[] {
     return [{ type: "trimActiveBlockToCount", keepCount: trimTo }];
   }
 
+  if (removeNums.length > 0 && hasActiveBlock) {
+    return [{ type: "removeSetsFromActiveBlock", setNumbers: removeNums }];
+  }
+
+  const scaleWeightsHint = suggestion.scaleActiveBlockWeights ?? null;
+  const tailScaleWeights = (targetSlugs?: string[]): ChatAction[] => {
+    if (!scaleWeightsHint) return [];
+    return [
+      {
+        type: "scaleActiveBlockWeights",
+        targetRpe: scaleWeightsHint.targetRpe ?? 8,
+        ...(scaleWeightsHint.warmupSets !== undefined
+          ? { warmupSets: scaleWeightsHint.warmupSets }
+          : {}),
+        ...(scaleWeightsHint.warmupStartPct !== undefined
+          ? { warmupStartPct: scaleWeightsHint.warmupStartPct }
+          : {}),
+        ...(scaleWeightsHint.preserveExistingWorkingLoads === true
+          ? { preserveExistingWorkingLoads: true }
+          : {}),
+        ...(targetSlugs && targetSlugs.length > 0
+          ? { exerciseSlugs: targetSlugs }
+          : {}),
+      },
+    ];
+  };
+
+  // Insert warmup rows before existing logged sets on the active block.
+  if (
+    suggestion.prependSetsToActiveBlock &&
+    suggestion.sets.length > 0 &&
+    hasActiveBlock
+  ) {
+    actions.push({ type: "prependToActiveBlock", sets: suggestion.sets });
+    actions.push(...tailScaleWeights());
+    return actions;
+  }
+
   // "Scale the reps for me" — the agent should auto-fill rep counts on
   // every weighted set in the active block using the suggestion-chip
   // algorithm. Only fires when there's actually an active block to
@@ -155,27 +171,8 @@ export function planChatTurn(input: ChatFlowInput): ChatAction[] {
   // Same idea, weight axis. Unlike scale-reps this can coexist with
   // sets being created in the same turn (e.g. "bench 5x5 you choose
   // the weight"), so we emit it AFTER any append/ensureBlock actions
-  // further down rather than short-circuiting here. We capture it now
-  // so each return path knows to tack the scale-weights action on.
-  const scaleWeightsHint = suggestion.scaleActiveBlockWeights ?? null;
-  const tailScaleWeights = (targetSlugs?: string[]): ChatAction[] => {
-    if (!scaleWeightsHint) return [];
-    return [
-      {
-        type: "scaleActiveBlockWeights",
-        targetRpe: scaleWeightsHint.targetRpe ?? 8,
-        ...(scaleWeightsHint.warmupSets !== undefined
-          ? { warmupSets: scaleWeightsHint.warmupSets }
-          : {}),
-        ...(scaleWeightsHint.warmupStartPct !== undefined
-          ? { warmupStartPct: scaleWeightsHint.warmupStartPct }
-          : {}),
-        ...(targetSlugs && targetSlugs.length > 0
-          ? { exerciseSlugs: targetSlugs }
-          : {}),
-      },
-    ];
-  };
+  // further down rather than short-circuiting here. We capture `tailScaleWeights`
+  // above so prepend / append paths can tack scale-weights on.
 
   if (hasBlockOps) {
     actions.push({

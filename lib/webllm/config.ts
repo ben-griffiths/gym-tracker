@@ -1,15 +1,16 @@
 import type { ChatOptions } from "@mlc-ai/web-llm";
-import { prefersLowResourceWebLLM } from "@/lib/webllm-capability";
+import { prefersLowResourceWebLLM } from "@/lib/webllm/capability";
 
 /**
- * Single global WebLLM checkpoint. Pinned to **`Llama-3.2-1B-Instruct-q4f16_1-MLC`** —
- * a compact (~700 MB) prebuilt that's listed in `@mlc-ai/web-llm`'s `prebuiltAppConfig` for
- * the pinned package version. It is **not** in MLC's `functionCallingModelIds`, so
- * `chat.completions.create({ tools, tool_choice })` cannot be used; tool calls are emitted
- * via a manual JSON-output protocol — see `runChatAgentWebLLM` in `lib/workout-chat-webllm.ts`.
- * Same checkpoint on desktop and mobile.
+ * Single global WebLLM checkpoint. Pinned to **`Llama-3.2-1B-Instruct-q4f32_1-MLC`** —
+ * compact 1B instruct, listed in `@mlc-ai/web-llm`'s `prebuiltAppConfig` for the
+ * pinned package version. It is **not** in MLC's `functionCallingModelIds`, so
+ * `chat.completions.create({ tools, tool_choice })` cannot be used.
+ *
+ * Workout chat uses **`chatText`** to produce a minimal `<workout>` XML document, then the app
+ * parses and repairs it — see `lib/workout-chat/workout-chat-turn.ts`.
  */
-export const WEBLLM_MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+export const WEBLLM_MODEL_ID = "Llama-3.2-1B-Instruct-q4f32_1-MLC";
 
 /** @deprecated use WEBLLM_MODEL_ID / resolveWebLLMModelId */
 export const DEFAULT_WEBLLM_MODEL_ID_MOBILE = WEBLLM_MODEL_ID;
@@ -36,9 +37,4 @@ export function resolveWebLLMChatOptions(): ChatOptions | undefined {
       ? 1024
       : 2048;
   return { context_window_size };
-}
-
-/** @deprecated use resolveWebLLMModelId */
-export function getPublicWebLLMModelId(): string {
-  return resolveWebLLMModelId();
 }

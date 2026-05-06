@@ -1,7 +1,7 @@
-import { webllmLog } from "@/lib/webllm-client-log";
-import { readLastWebllmInitProgress } from "@/lib/webllm-init-progress-last";
-import type { StorageBootstrapSnapshot } from "@/lib/webllm-storage-bootstrap";
-import { getInflightToken, isInflightLoad } from "@/lib/webllm-load-session";
+import { webllmLog } from "@/lib/webllm/client-log";
+import { readLastWebllmInitProgress } from "@/lib/webllm/init-progress";
+import type { StorageBootstrapSnapshot } from "@/lib/webllm/storage-bootstrap";
+import { getInflightToken, isInflightLoad } from "@/lib/webllm/load-session";
 
 const LS_KEY = "gym.webllm.diag_v1";
 const MAX_SNAPSHOT_ENTRIES = 50;
@@ -43,7 +43,7 @@ type OutgoingPayload = {
     lastProgress: number | null;
     entryCount: number;
     sampleEntries: SnapshotEntry[];
-    /** Unthrottled last line before tab kill (`sessionStorage`); see lib/webllm-init-progress-last.ts */
+    /** Unthrottled last line before tab kill (`sessionStorage`); see lib/webllm/init-progress.ts */
     lastScratchSnapshot?: {
       progress: number;
       text: string;
@@ -59,6 +59,7 @@ type OutgoingPayload = {
     /** Set from preload bootstrap when available (best-effort). */
     crossOriginIsolated?: boolean | null;
     webgpuPresent?: boolean | null;
+    storagePersistAlready?: boolean | null;
     storagePersisted?: boolean | null;
     storageUsageMB?: number | null;
     storageQuotaMB?: number | null;
@@ -306,6 +307,7 @@ function getEnvBox(): OutgoingPayload["environment"] {
     crossOriginIsolated:
       typeof window !== "undefined" ? window.crossOriginIsolated : null,
     webgpuPresent: !!(nav as Navigator & { gpu?: unknown }).gpu,
+    storagePersistAlready: pre?.persistedAlready ?? null,
     storagePersisted: pre?.persisted ?? null,
     storageUsageMB: pre?.usageMB ?? null,
     storageQuotaMB: pre?.quotaMB ?? null,

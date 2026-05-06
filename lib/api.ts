@@ -9,11 +9,12 @@
  * Reads come from Dexie via lib/sync/workouts-live.ts (`useHistoryGroups`).
  * The local row update in step 2 reactively re-renders subscribers — the
  * UI doesn't wait on the network. Return shapes here still mirror the
- * legacy /api/* responses so existing callers (workout/page.tsx,
- * history-sheet.tsx) consume the synthetic payload unchanged.
+ * legacy /api/* responses so existing callers (e.g. workout/page.tsx)
+ * consume the synthetic payload unchanged.
  */
 
 import type { EffortFeel, VisionRecognitionResponse } from "@/lib/types/workout";
+import { clientPlaywrightBypassActive } from "@/lib/playwright-bypass";
 import { getLocalDb, newUuid, nowIso } from "@/lib/sync/db";
 import { enqueueMutation, kickSync } from "@/lib/sync/engine";
 import type {
@@ -44,6 +45,12 @@ function slugifyGroupName(name: string): string {
 }
 
 async function getCurrentUserId(): Promise<string> {
+  // E2E: env when the dev server was started with NEXT_PUBLIC_PLAYWRIGHT_BYPASS_AUTH,
+  // or cookie when Playwright sends x-gym-playwright-bypass (reuseExistingServer
+  // against a normal dev process — bundle may not have the public env inlined).
+  if (clientPlaywrightBypassActive()) {
+    return "playwright-e2e-user";
+  }
   // Use getSession() — purely local read of the cached token. Calling
   // getUser() here hits the auth endpoint to revalidate, which hangs
   // offline and blocks every mutation behind it.
@@ -274,6 +281,7 @@ export async function updateSet(
     rpe?: number | null;
     rir?: number | null;
     feel?: EffortFeel | null;
+    setNumber?: number;
   },
 ) {
   const db = getLocalDb();
@@ -285,6 +293,8 @@ export async function updateSet(
     reps: patch.reps !== undefined ? patch.reps : existing.reps,
     weight: patch.weight !== undefined ? patch.weight : existing.weight,
     weight_unit: patch.weightUnit ?? existing.weight_unit,
+    set_number:
+      patch.setNumber !== undefined ? patch.setNumber : existing.set_number,
     rpe: patch.rpe !== undefined ? patch.rpe : existing.rpe,
     rir: patch.rir !== undefined ? patch.rir : existing.rir,
     feel: patch.feel !== undefined ? patch.feel : existing.feel,
@@ -423,6 +433,7 @@ type CreateSetInput = {
   rpe?: number | null;
   rir?: number | null;
   feel?: EffortFeel | null;
+  isWarmup?: boolean;
 };
 
 async function insertSet(
@@ -443,7 +454,7 @@ async function insertSet(
     rpe: entry.rpe ?? null,
     rir: entry.rir ?? null,
     feel: entry.feel ?? null,
-    is_warmup: false,
+    is_warmup: entry.isWarmup ?? false,
     notes: null,
     logged_at: ts,
     source: entry.source,
@@ -497,14 +508,15 @@ export async function createManySets(payload: {
   exercise: string;
   source: "manual" | "camera" | "chat";
   startingSetNumber?: number;
-  entries: Array<{
-    reps: number | null;
-    weight: number | null;
-    weightUnit: "kg" | "lb";
-    rpe?: number | null;
-    rir?: number | null;
-    feel?: EffortFeel | null;
-  }>;
+    entries: Array<{
+      reps: number | null;
+      weight: number | null;
+      weightUnit: "kg" | "lb";
+      rpe?: number | null;
+      rir?: number | null;
+      feel?: EffortFeel | null;
+      isWarmup?: boolean;
+    }>;
 }) {
   const userId = await getCurrentUserId();
   const exercise = await findOrCreateExercise(userId, payload.exercise);
@@ -533,6 +545,7 @@ export async function createManySets(payload: {
       rpe: e.rpe ?? null,
       rir: e.rir ?? null,
       feel: e.feel ?? null,
+      isWarmup: e.isWarmup,
     });
     created.push(row);
   }

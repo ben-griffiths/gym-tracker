@@ -4,7 +4,7 @@ import type {
   LogLevel,
   MLCEngineInterface,
 } from "@mlc-ai/web-llm";
-import { webllmLog, webllmLogError } from "@/lib/webllm-client-log";
+import { webllmLog, webllmLogError } from "@/lib/webllm/client-log";
 
 type WebllmNamespace = typeof import("@mlc-ai/web-llm");
 
@@ -35,6 +35,8 @@ export async function loadPreferredWebllmEngine(params: {
   const engineConfig = {
     appConfig: {
       ...params.webllm.prebuiltAppConfig,
+      // Cache API path (vs IndexedDB): MLC notes Cache API is more well-tested in WebLLM today;
+      // pair with navigator.storage.persist() in storage-bootstrap for eviction resistance.
       useIndexedDBCache: false as const,
     },
     logLevel: logWarn,

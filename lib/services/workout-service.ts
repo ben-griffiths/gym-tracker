@@ -546,6 +546,7 @@ export async function updateSetEntry(
     feel?: "easy" | "medium" | "hard" | null;
     isWarmup?: boolean;
     notes?: string;
+    setNumber?: number;
   },
 ) {
   const updatePayload: Record<string, unknown> = {};
@@ -557,6 +558,7 @@ export async function updateSetEntry(
   if (patch.feel !== undefined) updatePayload.feel = patch.feel;
   if (patch.isWarmup !== undefined) updatePayload.is_warmup = patch.isWarmup;
   if (patch.notes !== undefined) updatePayload.notes = patch.notes;
+  if (patch.setNumber !== undefined) updatePayload.set_number = patch.setNumber;
 
   const { data, error } = await client
     .from("set_entries")

@@ -38,7 +38,7 @@ export function isStandalonePWA(): boolean {
 }
 
 /**
- * The pinned model is now `Llama-3.2-1B-Instruct-q4f16_1-MLC` (~700 MB), which fits
+ * The pinned model is now `Llama-3.2-1B-Instruct-q4f32_1-MLC`, which fits
  * comfortably inside iOS Safari's per-origin Cache API ceiling (~1.3–1.5 GB), so the
  * historic PWA-install gate is no longer required for the model to finish loading.
  *
@@ -50,8 +50,17 @@ export function requiresIOSPWAInstallForWebLLM(): boolean {
   return false;
 }
 
-const MOBILE_UA_RE =
+export const MOBILE_UA_RE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+
+/**
+ * WebKit / Chromium phones and tablets likely to rely on Cache Storage for
+ * WebLLM artifacts (desktop WebLLM unaffected by gating on this helper).
+ */
+export function isLikelyMobileWebLLMClient(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return isIOS() || MOBILE_UA_RE.test(navigator.userAgent);
+}
 
 /**
  * Phones / tablets and constrained networks still benefit from a tighter KV

@@ -54,6 +54,7 @@ export const updateSetSchema = z.object({
   feel: feelSchema.nullable().optional(),
   isWarmup: z.boolean().optional(),
   notes: z.string().max(160).optional(),
+  setNumber: z.number().int().min(1).max(100).optional(),
 });
 
 export const createWorkoutSchema = z.object({

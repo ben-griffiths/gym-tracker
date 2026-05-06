@@ -16,7 +16,12 @@ function summarizeSets(sets: SetDetail[]) {
   if (sets.length === 0) return "start a new block";
   const parts = sets.map((set) => {
     const reps = set.reps ?? "–";
-    const weight = set.weight !== null ? `${set.weight}${set.weightUnit}` : "–";
+    const weight =
+      set.weight !== null
+        ? `${set.weight}${
+            set.weightUnit != null ? set.weightUnit : ""
+          }`.trim() || "–"
+        : "–";
     return `${reps}×${weight}`;
   });
   return parts.join(" · ");

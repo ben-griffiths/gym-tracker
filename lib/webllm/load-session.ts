@@ -1,4 +1,4 @@
-import { webllmLog } from "@/lib/webllm-client-log";
+import { webllmLog } from "@/lib/webllm/client-log";
 
 /**
  * Stops the Safari "this webpage was reloaded" death loop: if the tab crashes

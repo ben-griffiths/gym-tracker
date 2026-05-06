@@ -29,10 +29,13 @@ export type SetDetail = {
   setNumber: number;
   reps: number | null;
   weight: number | null;
-  weightUnit: WeightUnit;
+  /** Null when the source XML did not specify a unit (filled at persist time). */
+  weightUnit: WeightUnit | null;
   rpe?: number | null;
   rir?: number | null;
   feel?: EffortFeel | null;
+  /** When true, row is tagged as a warmup for storage (`is_warmup`). */
+  isWarmup?: boolean;
 };
 
 export type SetUpdate = {
@@ -78,21 +81,24 @@ export type ChatContextSet = {
   rpe?: number | null;
   rir?: number | null;
   feel?: EffortFeel | null;
+  /** Warmup rows when present on the block. */
+  isWarmup?: boolean;
 };
 
-export type ChatContextBlock = {
+export type ChatContextSnapshotBlock = {
   exerciseSlug: string;
   exerciseName: string;
   sets: ChatContextSet[];
   isActive?: boolean;
 };
 
-export type ChatContext = {
+/** Snapshot of workout state passed into on-device LLM prompts. */
+export type ChatContextSnapshot = {
   exerciseSlug?: string;
   exerciseName?: string;
   sets?: ChatContextSet[];
   /** All exercise blocks present in the chat stream, in order. */
-  blocks?: ChatContextBlock[];
+  blocks?: ChatContextSnapshotBlock[];
 };
 
 export type BlockOperation =
@@ -121,6 +127,11 @@ export type ChatSetSuggestion = {
   updates: SetUpdate[];
   /** Operations that add/remove/replace entire exercise blocks. */
   blockOperations: BlockOperation[];
+  /**
+   * When set, the client removes these `setNumber` values from the active block
+   * (e.g. from structured chat suggestions).
+   */
+  removeSetsAtNumbers?: number[];
   /**
    * When true, the new sets should REPLACE any existing sets on the
    * active exercise block instead of appending to them. Set by phrases
@@ -153,7 +164,16 @@ export type ChatSetSuggestion = {
     targetRpe: number;
     warmupSets?: number;
     warmupStartPct?: number;
+    /**
+     * When prepending warmup rows onto an existing prescription, only fill
+     * weights on the new warmup slots — leave existing working loads untouched.
+     */
+    preserveExistingWorkingLoads?: boolean;
   } | null;
+  /**
+   * Insert parsed sets before existing rows on the active block (warmups only).
+   */
+  prependSetsToActiveBlock?: boolean;
   suggestedCommonReps: number[];
   suggestedCommonWeights: number[];
   userMessage: string;
