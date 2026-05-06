@@ -92,6 +92,10 @@ export function kickSync(): Promise<void> {
         pendingKick = false;
         await runOnce();
       } while (pendingKick);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("kickSync loop failed", err);
+      emit({ status: "error", lastError: message });
     } finally {
       inflight = null;
     }

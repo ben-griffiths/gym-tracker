@@ -29,11 +29,13 @@ export function AvatarCircle({ className }: AvatarCircleProps) {
     let isActive = true;
     const client = createClient();
 
+    // Local session read only — getUser() talks to the auth server and can omit
+    // email while offline even with a valid refresh token in storage.
     client.auth
-      .getUser()
+      .getSession()
       .then(({ data }) => {
         if (!isActive) return;
-        setEmail(data.user?.email ?? null);
+        setEmail(data.session?.user?.email ?? null);
       })
       .catch(() => {
         if (!isActive) return;

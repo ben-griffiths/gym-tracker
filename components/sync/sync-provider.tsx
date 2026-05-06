@@ -9,7 +9,11 @@ import { startSyncEngine } from "@/lib/sync/engine";
  */
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    startSyncEngine();
+    try {
+      startSyncEngine();
+    } catch (err) {
+      console.warn("Sync engine failed to start", err);
+    }
     if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch((err) => {
         console.warn("SW registration failed", err);

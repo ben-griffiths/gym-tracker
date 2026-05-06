@@ -153,15 +153,19 @@ export function useHistoryGroups(): {
   const userId = useCurrentUserId();
   const groups = useLiveQuery(
     async () => {
-      if (!userId) return undefined;
+      // `undefined` userId = session not read yet. `null` = signed out — expose
+      // empty history so pages don’t spin forever offline (Dexie isn’t scoped).
+      if (userId === undefined) return undefined;
+      if (userId === null) return [];
       return selectHistoryGroups(getLocalDb(), userId);
     },
     [userId],
     undefined,
   );
+  const resolved = userId !== undefined && groups !== undefined;
   return {
-    data: groups ? { groups, storageMode: "database" } : undefined,
-    isLoading: userId === undefined || groups === undefined,
+    data: resolved ? { groups, storageMode: "database" } : undefined,
+    isLoading: !resolved,
   };
 }
 
