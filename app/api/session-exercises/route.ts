@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Create a `session_exercises` row (no sets) so empty exercises are persisted
- * and show up in history / edit rehydration.
+ * and show up in history / workout-url rehydration.
  */
 export async function POST(request: Request) {
   const auth = await requireSupabaseUser();

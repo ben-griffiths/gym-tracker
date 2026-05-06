@@ -62,7 +62,7 @@ const test = base.extend<{ page: Page }>({
 // ---------------------------------------------------------------------------
 
 async function loadModel(page: Page): Promise<boolean> {
-  await page.goto("/workout");
+  await page.goto("/workout/new");
   await page.waitForLoadState("domcontentloaded");
 
   const gpuSupported = await page.evaluate(

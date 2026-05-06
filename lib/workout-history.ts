@@ -17,7 +17,7 @@ export type HistorySession = {
   id: string;
   name: string;
   startedAt?: string;
-  /** Serialized workout chat for `/workout?edit=` rehydration; absent on older rows. */
+  /** Serialized workout chat for `/workout/<sessionId>` rehydration; absent on older rows. */
   chatTranscript?: unknown | null;
   sets?: HistorySet[];
   exercises?: Array<{
@@ -132,7 +132,7 @@ export function groupByExercise(
 
 /**
  * Build exercise groups in `session_exercises` order, including catalog exercises
- * with **no sets** (so they still appear on `/workout?edit=`). Falls back to
+ * with **no sets** (so they still appear when opening `/workout/<sessionId>`). Falls back to
  * set-only order when the API did not return `exercises` (e.g. legacy clients).
  */
 export function rehydrationExerciseGroupsInOrder(

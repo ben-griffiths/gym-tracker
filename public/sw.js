@@ -11,7 +11,7 @@ const OFFLINE_FALLBACK = "/";
 // Precache every top-level navigation. Without this, visiting /strength or
 // /rep-maxes for the first time offline falls back to OFFLINE_FALLBACK and
 // the user lands on the home page instead of the route they wanted.
-const PRECACHE_NAV_ROUTES = ["/", "/workout", "/strength", "/rep-maxes"];
+const PRECACHE_NAV_ROUTES = ["/", "/workout/new", "/strength", "/rep-maxes"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

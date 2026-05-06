@@ -280,7 +280,7 @@ Typical sequence in console / ingest-friendly events:
 
 ## Workout page integration
 
-**File:** [`app/workout/page.tsx`](../app/workout/page.tsx)
+**File:** [`app/workout/workout-page-client.tsx`](../app/workout/workout-page-client.tsx)
 
 - Imports **`useWebllm`**.
 - **`chatMutation`** (React Query):

@@ -317,7 +317,7 @@ export default function HomePage() {
                             </Badge>
                           ) : null}
                           <Link
-                            href={`/workout?edit=${encodeURIComponent(session.id)}`}
+                            href={`/workout/${encodeURIComponent(session.id)}`}
                             aria-label={`Edit ${session.name}`}
                             className="inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >

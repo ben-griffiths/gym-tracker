@@ -4,7 +4,7 @@ import type { SetDetail } from "@/lib/types/workout";
 import type { ExerciseRecord } from "@/lib/exercises";
 import type { WorkoutChatMessage } from "@/lib/workout-chat-transcript";
 
-/** Mirrors `ExerciseBlock` in app/workout/page.tsx. */
+/** Mirrors `ExerciseBlock` in app/workout/workout-page-client.tsx. */
 export type SnapshotExerciseBlock = {
   id: string;
   exercise: ExerciseRecord;
