@@ -30,18 +30,45 @@ export const viewport: Viewport = {
   ],
 };
 
+/** SVGs in /public; Safari ignores @media inside SVG when used as favicons — use link[media] pairs instead. */
+const FAVICON_LIGHT = {
+  url: "/favicon-light.svg",
+  type: "image/svg+xml",
+  media: "(prefers-color-scheme: light)",
+} as const;
+const FAVICON_DARK = {
+  url: "/favicon-dark.svg",
+  type: "image/svg+xml",
+  media: "(prefers-color-scheme: dark)",
+} as const;
+
 export const metadata: Metadata = {
   title: "LiftLog",
   description:
     "Mobile-first gym tracker with camera recognition, one-tap set logging, and chat assistance.",
   applicationName: "LiftLog",
+  /**
+   * System appearance: `media` lets Safari/Chrome pick the right asset for light vs dark
+   * without client JS (important for iOS Add to Home Screen, which snapshots icons from this document).
+   *
+   * iOS caveat: the home screen icon is often cached at install time; after changing assets, users may
+   * need to remove the shortcut and add it again (or clear Safari data) to see updates.
+   */
+  colorScheme: "dark light",
   icons: {
-    icon: [{ url: "/favicon-light.svg", type: "image/svg+xml" }],
+    // Legacy .ico last resort (moved to /public so it is not auto-prepended ahead of themed SVGs).
+    shortcut: [{ url: "/favicon.ico", type: "image/x-icon" }],
+    icon: [FAVICON_LIGHT, FAVICON_DARK],
+    apple: [
+      { ...FAVICON_LIGHT, sizes: "180x180" },
+      { ...FAVICON_DARK, sizes: "180x180" },
+    ],
   },
   appleWebApp: {
     capable: true,
     title: "LiftLog",
-    statusBarStyle: "default",
+    // Lets `theme-color` (viewport) tint the status area in standalone; pairs with media-specific theme-color.
+    statusBarStyle: "black-translucent",
   },
   formatDetection: {
     telephone: false,
