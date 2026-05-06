@@ -1,8 +1,9 @@
 "use client";
 
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useMemo, useState, type MouseEvent } from "react";
 import Image from "next/image";
 import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
+import { toast } from "sonner";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { CheckCircle2, ExternalLink, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,13 @@ function groupStepsByImage(steps: ExerciseGuideStep[]): StepGroup[] {
     }
   }
   return groups;
+}
+
+function interceptOfflineNav(e: MouseEvent<HTMLAnchorElement>) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    e.preventDefault();
+    toast.message("Reconnect to view this link.");
+  }
 }
 
 export function ExerciseGuideSheet({
@@ -108,6 +116,7 @@ export function ExerciseGuideSheet({
                     href={exercise.pageUrl}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={interceptOfflineNav}
                   >
                     standards page
                   </a>
@@ -187,6 +196,7 @@ export function ExerciseGuideSheet({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                    onClick={interceptOfflineNav}
                   >
                     Full guide on strengthlevel.com
                     <ExternalLink className="h-3 w-3" />

@@ -12,7 +12,10 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
-import { useHistoryGroups } from "@/lib/sync/workouts-live";
+import {
+  useHistoryGroups,
+  useWorkoutResumePayload,
+} from "@/lib/sync/workouts-live";
 import { toast } from "sonner";
 import { Copy, Pencil, Share, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -88,6 +91,7 @@ import {
   flattenSets,
   formatWorkoutTitle,
   groupByExercise,
+  type HistorySession,
   rehydrationExerciseGroupsInOrder,
 } from "@/lib/workout-history";
 import {
@@ -240,6 +244,13 @@ function ExerciseBlockStickyFrame({
 }
 
 function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
+  /**
+   * Offline / frontend-first workout flow:
+   * - Mutations: `lib/api.ts` Dexie + outbox (no blocking network).
+   * - Undo/edit: merges transcript then reconciles rows; PATCH paths enqueue locally.
+   * - `/workout/<id>` resume: `useWorkoutResumePayload` reads Dexie directly (not capped by GROUP_LIMIT history list).
+   * - Leaving workout offline: header `router.replace(session return path)` when `navigator.onLine === false` (see `lib/workout-nav.ts`).
+   */
   const router = useRouter();
   const webllm = useWebllm();
   const resumeSessionId = routeSegment === "new" ? null : routeSegment;
@@ -403,15 +414,37 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
   async function applyWorkoutStateSnapshot(target: WorkoutStateSnapshot) {
     const fromBlocks = blocksRef.current as Record<string, SnapshotExerciseBlock>;
     const merged = cloneWorkoutStateSnapshot(target);
+
+    // Local-first: reconcile Dexie after planning, but never block undo/edit on
+    // a single missing row (offline / brief IDB skew). Still throw if creates
+    // fail — new sets need stable dbIds for later patches.
     if (storageModeRef.current === "database" && sessionIdRef.current) {
       const plan = planDatabaseReconciliation(fromBlocks, merged.blocks);
-      try {
-        for (const id of plan.deleteDbIds) {
+      const persistenceWarnings: string[] = [];
+      for (const id of plan.deleteDbIds) {
+        try {
           await deleteSet(id);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          persistenceWarnings.push(`delete set: ${msg}`);
         }
-        for (const u of plan.updates) {
+      }
+      for (const u of plan.updates) {
+        try {
           await updateSet(u.dbId, u.patch);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (/not found locally/i.test(msg)) {
+            persistenceWarnings.push(`skipped stale set row`);
+          } else {
+            const message =
+              e instanceof Error ? e.message : "Could not sync database.";
+            toast.error(message);
+            throw e;
+          }
         }
+      }
+      try {
         for (const c of plan.creates) {
           const response = await createSet({
             sessionId: sessionIdRef.current!,
@@ -442,7 +475,14 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
         toast.error(message);
         throw e;
       }
+      if (persistenceWarnings.length > 0) {
+        toast.warning(
+          "Undo applied in the transcript; some set rows stayed as-is locally.",
+          { description: persistenceWarnings.slice(0, 2).join(" · ") },
+        );
+      }
     }
+
     runWithoutTranscriptSave(() => {
       commitMessages(merged.messages);
       commitBlocks(merged.blocks as Record<string, ExerciseBlock>);
@@ -572,14 +612,23 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
   // every local mutation so the chat reflects edits without a network hop.
   const historyQuery = useHistoryGroups();
 
-  const sessionFromHistory = useMemo(() => {
-    if (!sessionId || !historyQuery.data) return null;
+  /** Direct Dexie row for this URL — survives `GROUP_LIMIT` trimming in history lists. */
+  const workoutResumePayload = useWorkoutResumePayload(
+    typeof historyQuery.syncedUserId === "string" ? resumeSessionId : null,
+  );
+
+  const sessionFromHistory = useMemo((): HistorySession | null => {
+    if (!sessionId) return null;
+    if (workoutResumePayload && workoutResumePayload.id === sessionId) {
+      return workoutResumePayload as unknown as HistorySession;
+    }
+    if (!historyQuery.data) return null;
     for (const group of historyQuery.data.groups) {
       const found = group.sessions.find((s) => s.id === sessionId);
-      if (found) return found;
+      if (found) return found as HistorySession;
     }
     return null;
-  }, [sessionId, historyQuery.data]);
+  }, [sessionId, historyQuery.data, workoutResumePayload]);
 
   useEffect(() => {
     if (sessionFromHistory) setSessionStartedAtSeed(null);
@@ -630,23 +679,26 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     return summaries;
   }, [historyQuery.data, sessionId, resumeSessionId]);
 
-  // Rehydrate an existing workout session when the route is `/workout/<id>`.
-  // Rebuilds the exercise blocks + sets from the cached history payload so
-  // the user lands in the chat exactly as they left it — every existing set
-  // carries its DB id so subsequent edits/deletes target real rows instead
-  // of creating duplicates.
+  // Rehydrate `/workout/<id>` from Dexie (see `selectSessionForWorkoutResume`): every set row
+  // preserves its DB id for later patches; not limited by the history sidebar GROUP_LIMIT.
   useEffect(() => {
     if (!resumeSessionId || rehydratedRef.current) return;
-    const groups = historyQuery.data?.groups;
-    if (!groups) return;
+    // Offline-safe: Supabase reads only from cached session token (never blocks on network).
+    if (historyQuery.syncedUserId === undefined) return;
 
-    const session = groups
-      .flatMap((group) => group.sessions)
-      .find((candidate) => candidate.id === resumeSessionId);
+    // Signed-out — leave initial UI; Dexie-backed resume only applies with a logged-in identity.
+    if (historyQuery.syncedUserId === null) {
+      rehydratedRef.current = true;
+      return;
+    }
+
+    if (workoutResumePayload === undefined) return;
+
+    const session: HistorySession | null = workoutResumePayload
+      ? (workoutResumePayload as unknown as HistorySession)
+      : null;
     if (!session) {
-      // Query loaded but session isn't present (deleted elsewhere / bad id).
-      // Fall back to a fresh chat rather than leaving the user stuck with an
-      // empty screen.
+      // Deleted locally / stale deep link — don't trap the runner on empty content.
       rehydratedRef.current = true;
       toast.error("Couldn't find that workout — starting a fresh session.");
       runWithoutTranscriptSave(() => {
@@ -661,7 +713,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
 
     sessionIdRef.current = session.id;
     setSessionId(session.id);
-    const nextStorage = historyQuery.data?.storageMode ?? null;
+    const nextStorage = "database" as const;
     setStorageMode(nextStorage);
     storageModeRef.current = nextStorage;
 
@@ -781,7 +833,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
       };
       commitMessages([intro, ...blockMessages]);
     });
-  }, [resumeSessionId, historyQuery.data]);
+  }, [resumeSessionId, historyQuery.syncedUserId, workoutResumePayload]);
 
   const duplicatingRef = useRef(false);
   async function handleDuplicateWorkout(sessionId: string) {

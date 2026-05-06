@@ -23,6 +23,86 @@ import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
 
 const GROUP_LIMIT = 8;
 
+export type ResumeWorkoutSessionPayload = ReturnType<typeof projectSession> & {
+  exercises: Array<
+    ReturnType<typeof projectSessionExercise> & {
+      exercise: ReturnType<typeof projectExercise> | null;
+      sets: ReturnType<typeof projectSetEntry>[];
+    }
+  >;
+};
+
+/**
+ * Load one session directly from Dexie (ignores `GROUP_LIMIT`).
+ * `/workout/<id>` rehydrate must succeed offline even when its group is older
+ * than the eight newest groups surfaced in history lists.
+ */
+export async function selectSessionForWorkoutResume(
+  db: LiftLogLocalDB,
+  userId: string,
+  sessionId: string,
+): Promise<ResumeWorkoutSessionPayload | null> {
+  const sessionRow = await db.workout_sessions.get(sessionId);
+  if (!sessionRow || sessionRow.user_id !== userId || sessionRow.deleted_at) {
+    return null;
+  }
+
+  const sessionExercises = (
+    await db.session_exercises.where("session_id").equals(sessionId).toArray()
+  )
+    .filter((se) => !se.deleted_at)
+    .sort((a, b) => a.order_index - b.order_index);
+
+  const exerciseIds = Array.from(
+    new Set(
+      sessionExercises
+        .map((se) => se.exercise_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const exercises =
+    exerciseIds.length === 0
+      ? []
+      : (await db.exercises.where("id").anyOf(exerciseIds).toArray()).filter(
+          (e) => !e.deleted_at,
+        );
+  const exerciseById = new Map(exercises.map((e) => [e.id, projectExercise(e)]));
+
+  const sessionExerciseIds = sessionExercises.map((se) => se.id);
+  const sets =
+    sessionExerciseIds.length === 0
+      ? []
+      : (
+          await db.set_entries
+            .where("session_exercise_id")
+            .anyOf(sessionExerciseIds)
+            .toArray()
+        )
+          .filter((s) => !s.deleted_at)
+          .sort((a, b) => a.set_number - b.set_number);
+
+  const setsByExercise = new Map<string, ReturnType<typeof projectSetEntry>[]>();
+  for (const s of sets) {
+    const list = setsByExercise.get(s.session_exercise_id) ?? [];
+    list.push(projectSetEntry(s));
+    setsByExercise.set(s.session_exercise_id, list);
+  }
+
+  const assembled: ResumeWorkoutSessionPayload["exercises"] = [];
+  for (const se of sessionExercises) {
+    assembled.push({
+      ...projectSessionExercise(se),
+      exercise: se.exercise_id ? exerciseById.get(se.exercise_id) ?? null : null,
+      sets: setsByExercise.get(se.id) ?? [],
+    });
+  }
+
+  return {
+    ...projectSession(sessionRow),
+    exercises: assembled,
+  };
+}
+
 export async function selectHistoryGroups(
   db: LiftLogLocalDB,
   userId: string,
@@ -149,8 +229,9 @@ export async function selectHistoryGroups(
 export function useHistoryGroups(): {
   data: HistoryResponse | undefined;
   isLoading: boolean;
+  syncedUserId: string | null | undefined;
 } {
-  const userId = useCurrentUserId();
+  const userId = useSyncedUserId();
   const groups = useLiveQuery(
     async () => {
       // `undefined` userId = session not read yet. `null` = signed out — expose
@@ -166,10 +247,28 @@ export function useHistoryGroups(): {
   return {
     data: resolved ? { groups, storageMode: "database" } : undefined,
     isLoading: !resolved,
+    syncedUserId: userId,
   };
 }
 
-function useCurrentUserId(): string | null | undefined {
+/** Live Dexie-backed payload for `/workout/<sessionId>` — not limited by `GROUP_LIMIT`. */
+export function useWorkoutResumePayload(
+  sessionId: string | null,
+): ResumeWorkoutSessionPayload | null | undefined {
+  const userId = useSyncedUserId();
+  return useLiveQuery(
+    async () => {
+      if (!sessionId) return null;
+      if (userId === undefined) return undefined;
+      if (userId === null) return null;
+      return selectSessionForWorkoutResume(getLocalDb(), userId, sessionId);
+    },
+    [sessionId, userId],
+    undefined,
+  );
+}
+
+export function useSyncedUserId(): string | null | undefined {
   const [userId, setUserId] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;

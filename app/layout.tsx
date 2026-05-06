@@ -6,6 +6,7 @@ import { AppHeader } from "@/components/layout/app-header";
 import { AppHeaderCenterProvider } from "@/components/layout/app-header-center-context";
 import { REQUEST_PATHNAME_HEADER } from "@/lib/supabase/middleware";
 import { AppScrollArea } from "@/components/layout/app-scroll-area";
+import { WorkoutReturnPathRecorder } from "@/components/layout/workout-return-path-recorder";
 import { Providers } from "@/components/providers";
 
 const inter = Inter({
@@ -91,6 +92,7 @@ export default async function RootLayout({
     >
       <body className="flex h-dvh flex-col overflow-hidden bg-background">
         <Providers>
+          <WorkoutReturnPathRecorder />
           <AppHeaderCenterProvider>
             <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
               <AppHeader initialPathname={initialPathname} />

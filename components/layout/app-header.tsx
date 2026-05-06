@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ArrowLeft, BookOpen } from "lucide-react";
 import { AvatarCircle } from "@/components/profile/avatar-circle";
 import { useAppHeaderCenter } from "@/components/layout/app-header-center-context";
 import { formatWorkoutTitle } from "@/lib/workout-history";
+import { navigateBackFromWorkoutOffline } from "@/lib/workout-nav";
 
 const PAGE_HEADER_TITLES: Record<string, string> = {
   "/strength": "Strength",
@@ -20,6 +21,7 @@ type AppHeaderProps = {
 };
 
 export function AppHeader({ initialPathname }: AppHeaderProps) {
+  const router = useRouter();
   const livePathname = usePathname();
   const pathname = useSyncExternalStore(
     () => () => {},
@@ -27,6 +29,7 @@ export function AppHeader({ initialPathname }: AppHeaderProps) {
     () => initialPathname,
   );
   const isHome = pathname === "/";
+  const workoutRoute = pathname.startsWith("/workout");
   const pageTitle = PAGE_HEADER_TITLES[pathname];
   const { customTitle } = useAppHeaderCenter();
   /** Empty until mount so SSR and first client pass match; time uses local TZ only after hydration. */
@@ -68,8 +71,22 @@ export function AppHeader({ initialPathname }: AppHeaderProps) {
           <div className="grid w-full min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_auto] items-center gap-1">
             <Link
               href="/"
-              aria-label="Back to home"
+              prefetch
+              aria-label={workoutRoute ? "Leave workout" : "Back to home"}
               className="inline-flex h-11 w-11 shrink-0 items-center justify-start pl-0 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={
+                workoutRoute
+                  ? (e) => {
+                      if (
+                        typeof navigator !== "undefined" &&
+                        navigator.onLine === false
+                      ) {
+                        e.preventDefault();
+                        navigateBackFromWorkoutOffline(router);
+                      }
+                    }
+                  : undefined
+              }
             >
               <ArrowLeft className="h-6 w-6 shrink-0" />
             </Link>
