@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 import { AppHeader } from "@/components/layout/app-header";
 import { AppHeaderCenterProvider } from "@/components/layout/app-header-center-context";
+import { REQUEST_PATHNAME_HEADER } from "@/lib/supabase/middleware";
 import { AppScrollArea } from "@/components/layout/app-scroll-area";
 import { Providers } from "@/components/providers";
 
@@ -46,11 +48,14 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const headerStore = await headers();
+  const initialPathname = headerStore.get(REQUEST_PATHNAME_HEADER) ?? "/";
+
   return (
     <html
       lang="en"
@@ -61,7 +66,7 @@ export default function RootLayout({
         <Providers>
           <AppHeaderCenterProvider>
             <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
-              <AppHeader />
+              <AppHeader initialPathname={initialPathname} />
               <AppScrollArea>{children}</AppScrollArea>
             </div>
           </AppHeaderCenterProvider>

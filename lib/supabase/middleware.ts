@@ -1,11 +1,34 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
+import {
+  PW_BYPASS_COOKIE,
+  playwrightRequestBypassesAuth,
+} from "@/lib/playwright-bypass";
 import { getSupabasePublishableKey, getSupabaseUrl } from "@/lib/supabase/config";
+
+/** Forwarded on the request for RSC / layout so client components can match SSR. */
+export const REQUEST_PATHNAME_HEADER = "x-pathname";
+
+function requestHeadersWithPathname(request: NextRequest): Headers {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(REQUEST_PATHNAME_HEADER, request.nextUrl.pathname);
+  return requestHeaders;
+}
+
+function withPlaywrightBypassCookie(response: NextResponse): NextResponse {
+  response.cookies.set(PW_BYPASS_COOKIE, "1", {
+    path: "/",
+    maxAge: 60 * 60 * 24,
+    sameSite: "lax",
+    httpOnly: false,
+  });
+  return response;
+}
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({
     request: {
-      headers: request.headers,
+      headers: requestHeadersWithPathname(request),
     },
   });
 
@@ -23,7 +46,7 @@ export async function updateSession(request: NextRequest) {
           );
           response = NextResponse.next({
             request: {
-              headers: request.headers,
+              headers: requestHeadersWithPathname(request),
             },
           });
           cookiesToSet.forEach(({ name, value, options }) =>
@@ -34,13 +57,25 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   const { pathname } = request.nextUrl;
   const isAuthRoute = pathname === "/auth";
   const isApiRoute = pathname.startsWith("/api/");
+
+  const bypassViaEnv = process.env.PLAYWRIGHT_BYPASS_AUTH === "true";
+  const bypassViaDevHeader = playwrightRequestBypassesAuth(request.headers);
+
+  if (bypassViaEnv || bypassViaDevHeader) {
+    if (isAuthRoute) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return withPlaywrightBypassCookie(NextResponse.redirect(url));
+    }
+    return withPlaywrightBypassCookie(response);
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user && !isAuthRoute && !isApiRoute) {
     const url = request.nextUrl.clone();
