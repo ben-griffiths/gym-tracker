@@ -4,8 +4,8 @@
 // flushes when online.
 //
 // Versioned cache name lets us bump and clear stale entries on deploy.
-const SHELL_CACHE = "liftlog-shell-v7";
-const RUNTIME_CACHE = "liftlog-runtime-v7";
+const SHELL_CACHE = "liftlog-shell-v8";
+const RUNTIME_CACHE = "liftlog-runtime-v8";
 const OFFLINE_FALLBACK = "/";
 
 // Precache every top-level navigation. Without this, visiting /strength or
@@ -30,6 +30,7 @@ const PRECACHE_NAV_ROUTES = [
   "/exercises/deadlift",
   "/exercises/overhead-press",
   "/exercises/barbell-row",
+  "/auth",
 ];
 
 self.addEventListener("install", (event) => {
@@ -75,8 +76,19 @@ function isStaticAsset(url) {
   );
 }
 
-function isAppRouterFlightRequest(request) {
+function normalizePathname(pathname) {
+  if (pathname.length > 1 && pathname.endsWith("/")) {
+    return pathname.slice(0, -1);
+  }
+  return pathname;
+}
+
+function isAppRouterFlightRequest(request, url) {
   if (request.method !== "GET") return false;
+  if (url.searchParams.has("_rsc")) return true;
+  const prefetch = url.searchParams.get("prefetch");
+  if (prefetch === "1" || prefetch?.toLowerCase() === "rsc") return true;
+
   const h = request.headers;
   const segmentPrefetch = h.get("next-router-segment-prefetch");
   return (
@@ -103,10 +115,39 @@ function isSafeApiGet(request, url) {
 }
 
 /**
- * Network-first for HTML navigations and App Router RSC flight GETs.
- * Caches successful responses (full URL, including ?_rsc=…) for replay offline.
- * On failure: exact match → ignoreSearch (different _rsc tokens) → fallback /.
+ * Offline shell replay: tolerate `?_rsc=` churn and `Vary` on RSC (router
+ * state) by widening cache matches, then any ok entry for the pathname, then `/`.
  */
+async function matchShellOffline(cache, request) {
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return null;
+
+  const exact = await cache.match(request);
+  if (exact?.ok) return exact;
+
+  const ignoreQs = await cache.match(request, { ignoreSearch: true });
+  if (ignoreQs?.ok) return ignoreQs;
+
+  const ignoreQsVary = await cache.match(request, {
+    ignoreSearch: true,
+    ignoreVary: true,
+  });
+  if (ignoreQsVary?.ok) return ignoreQsVary;
+
+  const pathNorm = normalizePathname(url.pathname);
+  for (const keyReq of await cache.keys()) {
+    const ku = new URL(keyReq.url);
+    if (ku.origin !== url.origin) continue;
+    if (normalizePathname(ku.pathname) !== pathNorm) continue;
+    const hit = await cache.match(keyReq, { ignoreVary: true });
+    if (hit?.ok) return hit;
+  }
+
+  const fallback = await cache.match(OFFLINE_FALLBACK);
+  return fallback?.ok ? fallback : null;
+}
+
+/** Network-first shell + RSC flights; on failure uses {@link matchShellOffline}. */
 async function networkFirstShell(request, event) {
   const cache = await caches.open(SHELL_CACHE);
   try {
@@ -129,12 +170,8 @@ async function networkFirstShell(request, event) {
     }
     return response;
   } catch {
-    const exact = await cache.match(request);
-    if (exact) return exact;
-    const ignoreQs = await cache.match(request, { ignoreSearch: true });
-    if (ignoreQs) return ignoreQs;
-    const fallback = await cache.match(OFFLINE_FALLBACK);
-    return fallback || Response.error();
+    const offline = await matchShellOffline(cache, request);
+    return offline || Response.error();
   }
 }
 
@@ -149,7 +186,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (isAppRouterFlightRequest(request)) {
+  if (isAppRouterFlightRequest(request, url)) {
     event.respondWith(networkFirstShell(request, event));
     return;
   }
