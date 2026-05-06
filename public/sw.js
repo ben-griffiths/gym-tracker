@@ -4,14 +4,25 @@
 // into Dexie + outbox and the sync engine flushes when online.
 //
 // Versioned cache name lets us bump and clear stale entries on deploy.
-const SHELL_CACHE = "liftlog-shell-v4";
-const RUNTIME_CACHE = "liftlog-runtime-v4";
+const SHELL_CACHE = "liftlog-shell-v5";
+const RUNTIME_CACHE = "liftlog-runtime-v5";
 const OFFLINE_FALLBACK = "/";
 
 // Precache every top-level navigation. Without this, visiting /strength or
 // /rep-maxes for the first time offline falls back to OFFLINE_FALLBACK and
 // the user lands on the home page instead of the route they wanted.
-const PRECACHE_NAV_ROUTES = ["/", "/workout/new", "/strength", "/rep-maxes"];
+// Exercise detail URLs are unbounded; we precache the library + common slugs
+// linked from home so first-open offline covers the main catalog paths.
+const PRECACHE_NAV_ROUTES = [
+  "/",
+  "/workout/new",
+  "/strength",
+  "/rep-maxes",
+  "/exercises",
+  "/exercises/squat",
+  "/exercises/bench-press",
+  "/exercises/deadlift",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
