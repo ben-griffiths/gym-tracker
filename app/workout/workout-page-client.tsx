@@ -41,6 +41,7 @@ import {
   ExerciseBlockCard,
   type BlockSet,
 } from "@/components/workout/exercise-block-card";
+import { arrayMove } from "@dnd-kit/sortable";
 import { useWebllm } from "@/components/webllm/webllm-provider";
 import { webllmLogError } from "@/lib/webllm/client-log";
 import {
@@ -53,6 +54,7 @@ import {
   registerSessionExercise,
   updateSet,
 } from "@/lib/api";
+import { updateSetSchema } from "@/lib/validators/workout";
 import { getExerciseByName, getExerciseBySlug } from "@/lib/exercises";
 import { planChatTurn } from "@/lib/workout-chat/chat-flow";
 import { toKg } from "@/lib/lift-profiles";
@@ -1085,6 +1087,57 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     }
   }
 
+  async function reorderSetsInBlock(
+    blockId: string,
+    activeSetId: string,
+    overSetId: string,
+  ) {
+    const block = blocksRef.current[blockId];
+    if (!block || block.deleted) return;
+    const oldIndex = block.sets.findIndex((s) => s.id === activeSetId);
+    const newIndex = block.sets.findIndex((s) => s.id === overSetId);
+    if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
+
+    const prevById = new Map(block.sets.map((s) => [s.id, s]));
+    const reordered = arrayMove(block.sets, oldIndex, newIndex);
+    const nextSets = reordered.map((s, index) => ({
+      ...s,
+      setNumber: index + 1,
+    }));
+
+    const beforeSnapshot = blocksRef.current;
+    commitBlocks({
+      ...beforeSnapshot,
+      [blockId]: { ...block, sets: nextSets },
+    });
+    scheduleTranscriptSave();
+
+    if (storageModeRef.current !== "database") return;
+
+    const tasks: { dbId: string; setNumber: number }[] = [];
+    for (let i = 0; i < nextSets.length; i++) {
+      const s = nextSets[i]!;
+      const prev = prevById.get(s.id);
+      if (!prev?.dbId) continue;
+      const nextNum = i + 1;
+      if (prev.setNumber === nextNum) continue;
+      tasks.push({ dbId: prev.dbId, setNumber: nextNum });
+    }
+    if (tasks.length === 0) return;
+
+    try {
+      await Promise.all(
+        tasks.map((t) => updateSet(t.dbId, { setNumber: t.setNumber })),
+      );
+    } catch (e) {
+      commitBlocks(beforeSnapshot);
+      scheduleTranscriptSave();
+      toast.error(
+        e instanceof Error ? e.message : "Could not save set order.",
+      );
+    }
+  }
+
   /** Remove sets after index keepCount-1. Returns how many were removed. */
   function trimBlockToSetCount(blockId: string, keepCount: number): number {
     const block = blocksRef.current[blockId];
@@ -1320,6 +1373,130 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
         void updateSet(last.dbId, patch).catch(() => undefined);
       }
     }
+    return true;
+  }
+
+  async function commitSetRowFieldsEdit(
+    blockId: string,
+    setId: string,
+    fields: {
+      reps: number | null;
+      weight: number | null;
+      weightUnit: "kg" | "lb";
+    },
+  ): Promise<boolean> {
+    if (fields.reps === null && fields.weight === null) {
+      toast.error("Enter at least reps or weight.");
+      return false;
+    }
+
+    const parsedFields = updateSetSchema
+      .pick({ reps: true, weight: true, weightUnit: true })
+      .safeParse({
+        reps: fields.reps,
+        weight: fields.weight,
+        weightUnit: fields.weightUnit,
+      });
+    if (!parsedFields.success) {
+      toast.error("Reps must be a whole number 1–100; weight 0–2000.");
+      return false;
+    }
+
+    const block = blocksRef.current[blockId];
+    if (!block || block.deleted) return false;
+    const prevEntry = block.sets.find((s) => s.id === setId);
+    if (!prevEntry) return false;
+
+    const merged: BlockSet = {
+      ...prevEntry,
+      reps: fields.reps,
+      weight: fields.weight,
+      weightUnit: fields.weightUnit,
+    };
+
+    if (
+      merged.reps === prevEntry.reps &&
+      merged.weight === prevEntry.weight &&
+      merged.weightUnit === prevEntry.weightUnit
+    ) {
+      return true;
+    }
+
+    const beforeSnapshot = blocksRef.current;
+    const nextSets = block.sets.map((s) => (s.id === setId ? merged : s));
+    commitBlocks({
+      ...beforeSnapshot,
+      [blockId]: { ...block, sets: nextSets },
+    });
+    scheduleTranscriptSave();
+
+    if (storageModeRef.current !== "database") {
+      return true;
+    }
+
+    if (prevEntry.dbId) {
+      const patch: {
+        reps?: number | null;
+        weight?: number | null;
+        weightUnit?: "kg" | "lb";
+      } = {};
+      if (merged.reps !== prevEntry.reps) patch.reps = merged.reps;
+      if (merged.weight !== prevEntry.weight) patch.weight = merged.weight;
+      if (merged.weightUnit !== prevEntry.weightUnit)
+        patch.weightUnit = merged.weightUnit;
+      try {
+        await updateSet(prevEntry.dbId, patch);
+      } catch (e) {
+        commitBlocks(beforeSnapshot);
+        toast.error(
+          e instanceof Error ? e.message : "Could not save set to your log.",
+        );
+        return false;
+      }
+      return true;
+    }
+
+    const sid = sessionIdRef.current ?? (await ensureSessionId());
+    if (!sid) {
+      commitBlocks(beforeSnapshot);
+      toast.error("Session not ready yet");
+      return false;
+    }
+
+    try {
+      const response = await createSet({
+        sessionId: sid,
+        exercise: block.exercise.name,
+        reps: merged.reps,
+        weight: merged.weight,
+        weightUnit: merged.weightUnit,
+        setNumber: merged.setNumber,
+        source: "manual",
+        rpe: merged.rpe ?? null,
+        rir: merged.rir ?? null,
+        feel: merged.feel ?? null,
+        isWarmup: merged.isWarmup === true,
+      });
+      const dbId: string | undefined = response?.created?.id;
+      const bNow = blocksRef.current[blockId];
+      if (bNow && dbId) {
+        commitBlocks({
+          ...blocksRef.current,
+          [blockId]: {
+            ...bNow,
+            sets: bNow.sets.map((s) =>
+              s.id === setId ? { ...merged, dbId } : s,
+            ),
+          },
+        });
+        scheduleTranscriptSave();
+      }
+    } catch {
+      commitBlocks(beforeSnapshot);
+      toast.error("Could not save set");
+      return false;
+    }
+
     return true;
   }
 
@@ -3031,6 +3208,12 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
                         duplicateSetInBlock(block.id, setId),
                       );
                     }}
+                    onCommitSetRow={(setId, fields) =>
+                      commitSetRowFieldsEdit(block.id, setId, fields)
+                    }
+                    onReorderSets={(activeSetId, overSetId) =>
+                      void reorderSetsInBlock(block.id, activeSetId, overSetId)
+                    }
                     onDelete={() => removeBlock(block.id)}
                     suggestionsFooter={suggestionsFooterContent}
                   />

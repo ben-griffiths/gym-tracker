@@ -1,15 +1,40 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent,
+  ReactNode,
+  Ref,
+} from "react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import {
   ChevronDown,
   ChevronUp,
   CopyPlus,
+  GripVertical,
   HelpCircle,
   Trash2,
   Undo2,
 } from "lucide-react";
+import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { EffortFeel, ExerciseRecord } from "@/lib/types/workout";
 import { ExerciseGuideSheet } from "@/components/workout/exercise-guide-sheet";
@@ -28,6 +53,129 @@ export type BlockSet = {
   rir?: number | null;
   feel?: EffortFeel | null;
 };
+
+export type SetFieldsCommit = {
+  reps: number | null;
+  weight: number | null;
+  weightUnit: "kg" | "lb";
+};
+
+function formatRepsDraft(reps: number | null) {
+  return reps === null ? "" : String(reps);
+}
+
+function formatWeightDraft(weight: number | null) {
+  return weight === null ? "" : String(weight);
+}
+
+function parseRepsInput(raw: string): number | null | "invalid" {
+  const t = raw.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return "invalid";
+  return n;
+}
+
+function parseWeightInput(raw: string): number | null | "invalid" {
+  const t = raw.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return "invalid";
+  return n;
+}
+
+function SetRowFieldsEditor({
+  set,
+  onCommit,
+}: {
+  set: BlockSet;
+  onCommit: (fields: SetFieldsCommit) => Promise<boolean>;
+}) {
+  const [repsDraft, setRepsDraft] = useState(() => formatRepsDraft(set.reps));
+  const [weightDraft, setWeightDraft] = useState(() =>
+    formatWeightDraft(set.weight),
+  );
+
+  const syncFromSet = useCallback(() => {
+    setRepsDraft(formatRepsDraft(set.reps));
+    setWeightDraft(formatWeightDraft(set.weight));
+  }, [set.reps, set.weight]);
+
+  useEffect(() => {
+    syncFromSet();
+  }, [set.id, syncFromSet]);
+
+  const commitNow = useCallback(async () => {
+    const r = parseRepsInput(repsDraft);
+    const w = parseWeightInput(weightDraft);
+    if (r === "invalid" || w === "invalid") {
+      toast.error("Use a whole number for reps and a number for weight.");
+      syncFromSet();
+      return false;
+    }
+    if (r === null && w === null) {
+      toast.error("Enter at least reps or weight.");
+      syncFromSet();
+      return false;
+    }
+    const ok = await onCommit({
+      reps: r,
+      weight: w,
+      weightUnit: set.weightUnit,
+    });
+    if (!ok) syncFromSet();
+    return ok;
+  }, [onCommit, repsDraft, set.weightUnit, syncFromSet, weightDraft]);
+
+  const onFieldsKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void commitNow();
+    }
+  };
+
+  return (
+    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 sm:gap-x-2">
+      <span className="inline-flex min-w-0 items-center gap-1">
+        <Input
+          data-field="reps"
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          aria-label={`Set ${set.setNumber} reps`}
+          className="h-7 w-11 shrink-0 px-1 text-center text-sm tabular-nums md:w-12"
+          value={repsDraft}
+          onChange={(e) => setRepsDraft(e.target.value)}
+          onBlur={() => void commitNow()}
+          onKeyDown={onFieldsKeyDown}
+        />
+        <span className="shrink-0 text-sm text-muted-foreground" aria-hidden>
+          reps
+        </span>
+      </span>
+      <span className="text-muted-foreground" aria-hidden>
+        ·
+      </span>
+      <span className="inline-flex min-w-0 items-center gap-1">
+        <Input
+          data-field="weight"
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          aria-label={`Set ${set.setNumber} weight in ${set.weightUnit}`}
+          className="h-7 w-14 shrink-0 px-1 text-center text-sm tabular-nums md:w-16"
+          value={weightDraft}
+          onChange={(e) => setWeightDraft(e.target.value)}
+          onBlur={() => void commitNow()}
+          onKeyDown={onFieldsKeyDown}
+        />
+        <span className="shrink-0 text-sm text-muted-foreground" aria-hidden>
+          {set.weightUnit}
+        </span>
+      </span>
+    </span>
+  );
+}
 
 function formatRpeLabel(rpe: number | null | undefined): string | null {
   if (rpe === null || rpe === undefined) return null;
@@ -65,14 +213,11 @@ type ExerciseBlockCardProps = {
    * suggestion chips for the active exercise in the workout chat).
    */
   suggestionsFooter?: ReactNode;
+  /** When set, set rows become editable; commits call back with parsed numbers. */
+  onCommitSetRow?: (setId: string, fields: SetFieldsCommit) => Promise<boolean>;
+  /** With 2+ sets, shows a drag handle per row and persists order via this callback. */
+  onReorderSets?: (activeSetId: string, overSetId: string) => void;
 };
-
-function formatSet(set: BlockSet) {
-  const reps = set.reps !== null ? `${set.reps} reps` : "– reps";
-  const weight =
-    set.weight !== null ? `${set.weight} ${set.weightUnit}` : "– weight";
-  return { reps, weight };
-}
 
 function formatRepRange(sets: BlockSet[]): string {
   const reps = sets
@@ -95,6 +240,283 @@ function formatWeightRange(sets: BlockSet[]): string {
   return min === max ? `${min} ${unit}` : `${min}–${max} ${unit}`;
 }
 
+type ExerciseBlockSetRowSharedProps = {
+  set: BlockSet;
+  index: number;
+  editableRows: boolean;
+  showSetDuplicate: boolean;
+  showSetDelete: boolean;
+  onDuplicateSet?: (setId: string) => void;
+  onDeleteSet?: (setId: string) => void;
+  onCommitSetRow?: (setId: string, fields: SetFieldsCommit) => Promise<boolean>;
+};
+
+function ExerciseBlockSetRow({
+  set,
+  index,
+  editableRows,
+  showSetDuplicate,
+  showSetDelete,
+  onDuplicateSet,
+  onDeleteSet,
+  onCommitSetRow,
+  rowRef,
+  rowStyle,
+  isDragging,
+  dragHandle,
+}: ExerciseBlockSetRowSharedProps & {
+  rowRef?: Ref<HTMLLIElement>;
+  rowStyle?: CSSProperties;
+  isDragging?: boolean;
+  dragHandle?: ReactNode;
+}) {
+  const rpeLabel = formatRpeLabel(set.rpe);
+  const hasEffort =
+    rpeLabel !== null ||
+    (set.rir !== null && set.rir !== undefined) ||
+    Boolean(set.feel);
+
+  return (
+    <li
+      ref={rowRef}
+      style={rowStyle}
+      className={cn(
+        "flex flex-col",
+        isDragging &&
+          "relative z-[2] opacity-90 ring-2 ring-primary/35 ring-offset-2 ring-offset-background rounded-xl",
+      )}
+      data-set-row
+      data-weight-unit={set.weightUnit}
+    >
+      {index > 0 ? (
+        <div
+          className="mx-4 h-px shrink-0 bg-border/70 dark:bg-border/50"
+          aria-hidden
+        />
+      ) : null}
+      <div
+        className={cn(
+          "flex min-w-0 items-center justify-between gap-3 px-4 py-2.5 text-sm tabular-nums",
+          set.isWarmup &&
+            "bg-muted/40 text-muted-foreground dark:bg-muted/25",
+        )}
+      >
+        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 sm:gap-x-3">
+          <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
+            {set.setNumber}
+          </span>
+          {editableRows ? (
+            <SetRowFieldsEditor
+              set={set}
+              onCommit={(fields) => onCommitSetRow!(set.id, fields)}
+            />
+          ) : (
+            <>
+              {/* Explicit space so row textContent isn’t e.g. "15reps" from "1"+"5"+"reps". */}
+              {" "}
+              <span className="inline-flex min-w-0 items-baseline gap-1">
+                <span className="text-foreground tabular-nums">
+                  {set.reps !== null ? set.reps : "–"}
+                </span>
+                <span className="text-sm text-muted-foreground">reps</span>
+              </span>
+              <span className="text-muted-foreground" aria-hidden>
+                ·
+              </span>
+              <span className="inline-flex min-w-0 items-baseline gap-1">
+                <span className="text-foreground tabular-nums">
+                  {set.weight !== null ? set.weight : "–"}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {set.weightUnit}
+                </span>
+              </span>
+            </>
+          )}
+          {hasEffort ? (
+            <span className="flex flex-wrap items-center gap-1">
+              {rpeLabel ? (
+                <span className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  {rpeLabel}
+                </span>
+              ) : null}
+              {set.rir !== null && set.rir !== undefined ? (
+                <span className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-foreground/80">
+                  {`${set.rir} RIR`}
+                </span>
+              ) : null}
+              {set.feel ? (
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize",
+                    feelBadgeClass(set.feel),
+                  )}
+                >
+                  {set.feel}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </span>
+        {showSetDuplicate ||
+        (showSetDelete && onDeleteSet) ||
+        dragHandle ? (
+          <span className="ml-auto inline-flex shrink-0 items-center gap-0.5">
+            {showSetDuplicate && onDuplicateSet ? (
+              <button
+                type="button"
+                onClick={() => onDuplicateSet(set.id)}
+                disabled={set.reps === null && set.weight === null}
+                title="Duplicate this set"
+                aria-label={`Duplicate set ${set.setNumber}`}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <CopyPlus className="h-4 w-4" />
+              </button>
+            ) : null}
+            {showSetDelete && onDeleteSet ? (
+              <button
+                type="button"
+                onClick={() => onDeleteSet(set.id)}
+                aria-label={`Delete set ${set.setNumber}`}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            ) : null}
+            {dragHandle}
+          </span>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function SortableExerciseSetRow(props: ExerciseBlockSetRowSharedProps) {
+  const { set } = props;
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: set.id });
+
+  const rowStyle: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <ExerciseBlockSetRow
+      {...props}
+      rowRef={setNodeRef}
+      rowStyle={rowStyle}
+      isDragging={isDragging}
+      dragHandle={
+        <button
+          type="button"
+          className={cn(
+            "touch-none inline-flex h-8 w-7 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground hover:bg-muted/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing",
+            isDragging && "bg-muted/60 text-foreground",
+          )}
+          aria-label={`Drag to reorder set ${set.setNumber}`}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4 shrink-0" aria-hidden />
+        </button>
+      }
+    />
+  );
+}
+
+function ExerciseBlockSetsList({
+  sets,
+  editableRows,
+  showSetDuplicate,
+  showSetDelete,
+  onDuplicateSet,
+  onDeleteSet,
+  onCommitSetRow,
+  onReorderSets,
+}: Omit<ExerciseBlockSetRowSharedProps, "set" | "index"> & {
+  sets: BlockSet[];
+  onReorderSets?: (activeSetId: string, overSetId: string) => void;
+}) {
+  const reorderEnabled = Boolean(onReorderSets) && sets.length > 1;
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  const onDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      onReorderSets?.(String(active.id), String(over.id));
+    },
+    [onReorderSets],
+  );
+
+  const rowShared: Omit<
+    ExerciseBlockSetRowSharedProps,
+    "set" | "index"
+  > = {
+    editableRows,
+    showSetDuplicate,
+    showSetDelete,
+    onDuplicateSet,
+    onDeleteSet,
+    onCommitSetRow,
+  };
+
+  if (!reorderEnabled) {
+    return (
+      <ul className="flex flex-col">
+        {sets.map((set, index) => (
+          <ExerciseBlockSetRow
+            key={set.id}
+            set={set}
+            index={index}
+            {...rowShared}
+          />
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={onDragEnd}
+    >
+      <SortableContext
+        items={sets.map((s) => s.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        <ul className="flex flex-col">
+          {sets.map((set, index) => (
+            <SortableExerciseSetRow
+              key={set.id}
+              set={set}
+              index={index}
+              {...rowShared}
+            />
+          ))}
+        </ul>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
 export function ExerciseBlockCard({
   exercise,
   sets,
@@ -108,6 +530,8 @@ export function ExerciseBlockCard({
   deleted,
   onRestore,
   suggestionsFooter,
+  onCommitSetRow,
+  onReorderSets,
 }: ExerciseBlockCardProps) {
   const summaryParts: string[] = [];
   if (deleted) {
@@ -125,6 +549,7 @@ export function ExerciseBlockCard({
   const showDelete = !deleted && Boolean(onDelete);
   const showSetDelete = !deleted && Boolean(onDeleteSet);
   const showSetDuplicate = !deleted && Boolean(onDuplicateSet);
+  const editableRows = !deleted && Boolean(onCommitSetRow);
 
   return (
     <div
@@ -241,94 +666,16 @@ export function ExerciseBlockCard({
             No sets yet. Send reps or weight in the chat to add one.
           </div>
         ) : (
-          <ul className="flex flex-col">
-            {sets.map((set, index) => {
-              const { reps: repsLabel, weight: weightLabel } = formatSet(set);
-              const rpeLabel = formatRpeLabel(set.rpe);
-              const hasEffort =
-                rpeLabel !== null ||
-                (set.rir !== null && set.rir !== undefined) ||
-                Boolean(set.feel);
-              return (
-                <li key={set.id} className="flex flex-col">
-                  {index > 0 ? (
-                    <div
-                      className="mx-4 h-px shrink-0 bg-border/70 dark:bg-border/50"
-                      aria-hidden
-                    />
-                  ) : null}
-                  <div
-                    className={cn(
-                      "flex items-center justify-between gap-3 px-4 py-2.5 text-sm tabular-nums",
-                      set.isWarmup &&
-                        "bg-muted/40 text-muted-foreground dark:bg-muted/25",
-                    )}
-                  >
-                  <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-[11px] font-semibold">
-                      {set.setNumber}
-                    </span>
-                    {/* Explicit space so row textContent isn’t e.g. "15 reps" from "1"+"5 reps". */}
-                    {" "}
-                    <span className="text-foreground">{repsLabel}</span>
-                    <span className="text-muted-foreground">·</span>
-                    <span className="text-foreground">{weightLabel}</span>
-                    {hasEffort ? (
-                      <span className="flex flex-wrap items-center gap-1">
-                        {rpeLabel ? (
-                          <span className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                            {rpeLabel}
-                          </span>
-                        ) : null}
-                        {set.rir !== null && set.rir !== undefined ? (
-                          <span className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-foreground/80">
-                            {`${set.rir} RIR`}
-                          </span>
-                        ) : null}
-                        {set.feel ? (
-                          <span
-                            className={cn(
-                              "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize",
-                              feelBadgeClass(set.feel),
-                            )}
-                          >
-                            {set.feel}
-                          </span>
-                        ) : null}
-                      </span>
-                    ) : null}
-                  </span>
-                  {showSetDuplicate || (showSetDelete && onDeleteSet) ? (
-                    <span className="inline-flex shrink-0 items-center gap-0.5">
-                      {showSetDuplicate && onDuplicateSet ? (
-                        <button
-                          type="button"
-                          onClick={() => onDuplicateSet(set.id)}
-                          disabled={set.reps === null && set.weight === null}
-                          title="Duplicate this set"
-                          aria-label={`Duplicate set ${set.setNumber}`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <CopyPlus className="h-4 w-4" />
-                        </button>
-                      ) : null}
-                      {showSetDelete && onDeleteSet ? (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteSet(set.id)}
-                          aria-label={`Delete set ${set.setNumber}`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      ) : null}
-                    </span>
-                  ) : null}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          <ExerciseBlockSetsList
+            sets={sets}
+            editableRows={editableRows}
+            showSetDuplicate={showSetDuplicate}
+            showSetDelete={showSetDelete}
+            onDuplicateSet={onDuplicateSet}
+            onDeleteSet={onDeleteSet}
+            onCommitSetRow={onCommitSetRow}
+            onReorderSets={onReorderSets}
+          />
         )
       ) : null}
 
