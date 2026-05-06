@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { planChatTurn, type ChatAction } from "../lib/chat-flow";
+import { test, expect } from "@playwright/test";
+import { planChatTurn, type ChatAction } from "../lib/workout-chat/chat-flow";
 import type {
   ChatSetSuggestion,
   ExerciseRecord,
@@ -76,8 +76,8 @@ function setsOf(count: number, reps = 5, weight = 100): SetDetail[] {
   }));
 }
 
-describe("planChatTurn", () => {
-  it("prefers trimming set count over LLM field updates when user says 'just N sets'", () => {
+test.describe("planChatTurn", () => {
+  test("prefers trimming set count over LLM field updates when user says 'just N sets'", () => {
     const actions = planChatTurn({
       suggestion: makeSuggestion({
         userMessage: "actually it should be just 5 sets",
@@ -92,13 +92,58 @@ describe("planChatTurn", () => {
       activeBlockSetCount: 10,
       bufferedSets: [],
     });
-    expect(actions).toEqual<ChatAction[]>([
+    expect(actions).toEqual([
       { type: "trimActiveBlockToCount", keepCount: 5 },
     ]);
   });
 
-  describe("buffering sets without an exercise", () => {
-    it("buffers sets and prompts for an exercise when there is no active block", () => {
+  test("removes specific set numbers when suggestion carries removeSetsAtNumbers", () => {
+    const actions = planChatTurn({
+      suggestion: makeSuggestion({
+        userMessage: "drop set 2",
+        removeSetsAtNumbers: [2],
+      }),
+      hasActiveBlock: true,
+      activeBlockSetCount: 3,
+      bufferedSets: [],
+    });
+    expect(actions).toEqual([{ type: "removeSetsFromActiveBlock", setNumbers: [2] }]);
+  });
+
+  test("prepends warmup rows then optionally scales warmup-slot weights only", () => {
+    const warmupSets: SetDetail[] = [
+      { setNumber: 1, reps: 8, weight: null, weightUnit: "kg" },
+      { setNumber: 2, reps: 4, weight: null, weightUnit: "kg" },
+    ];
+    const actions = planChatTurn({
+      suggestion: makeSuggestion({
+        userMessage: "add 2 warmup sets to beginning",
+        prependSetsToActiveBlock: true,
+        sets: warmupSets,
+        scaleActiveBlockWeights: {
+          targetRpe: 8,
+          warmupSets: 2,
+          warmupStartPct: 0.3,
+          preserveExistingWorkingLoads: true,
+        },
+      }),
+      hasActiveBlock: true,
+      bufferedSets: [],
+    });
+    expect(actions).toEqual([
+      { type: "prependToActiveBlock", sets: warmupSets },
+      {
+        type: "scaleActiveBlockWeights",
+        targetRpe: 8,
+        warmupSets: 2,
+        warmupStartPct: 0.3,
+        preserveExistingWorkingLoads: true,
+      },
+    ]);
+  });
+
+  test.describe("buffering sets without an exercise", () => {
+    test("buffers sets and prompts for an exercise when there is no active block", () => {
       // User: "100kg 5 reps 10 sets"
       const actions = planChatTurn({
         suggestion: makeSuggestion({ sets: setsOf(10) }),
@@ -106,7 +151,7 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         { type: "bufferSets", sets: setsOf(10) },
         {
           type: "reply",
@@ -115,7 +160,7 @@ describe("planChatTurn", () => {
       ]);
     });
 
-    it("drains buffered sets when the next turn auto-resolves an exercise", () => {
+    test("drains buffered sets when the next turn auto-resolves an exercise", () => {
       // Follow-up turn: user says "bench press" (no new sets).
       // Server auto-resolves Bench Press. The 10 buffered sets MUST land on
       // the new block — that's the bug the user reported.
@@ -126,7 +171,7 @@ describe("planChatTurn", () => {
         bufferedSets: buffered,
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         {
           type: "ensureBlockAndAppend",
           exercise: BENCH_PRESS,
@@ -135,7 +180,7 @@ describe("planChatTurn", () => {
       ]);
     });
 
-    it("drains buffered sets via the auto-pick picker path when the exercise is ambiguous", () => {
+    test("drains buffered sets via the auto-pick picker path when the exercise is ambiguous", () => {
       // User buffered 3 sets earlier. Now types "overhead press" (ambiguous).
       // Expect auto-pick + log + switch picker.
       const buffered = setsOf(3, 10, 40);
@@ -147,7 +192,7 @@ describe("planChatTurn", () => {
         bufferedSets: buffered,
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         {
           type: "ensureBlockAndAppend",
           exercise: SHOULDER_PRESS,
@@ -157,7 +202,7 @@ describe("planChatTurn", () => {
       ]);
     });
 
-    it("merges buffered sets with same-turn sets when a block is created", () => {
+    test("merges buffered sets with same-turn sets when a block is created", () => {
       // User buffered 2 sets, then types "bench press 60kg 3x8".
       const buffered = setsOf(2, 5, 100);
       const fresh = setsOf(3, 8, 60);
@@ -181,22 +226,22 @@ describe("planChatTurn", () => {
     });
   });
 
-  describe("sets with an active block", () => {
-    it("appends sets to the active block without prompting", () => {
+  test.describe("sets with an active block", () => {
+    test("appends sets to the active block without prompting", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({ sets: setsOf(3, 8, 60) }),
         hasActiveBlock: true,
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         { type: "appendToActiveBlock", sets: setsOf(3, 8, 60) },
       ]);
     });
   });
 
-  describe("exercise-only messages", () => {
-    it("shows a plain picker when the exercise is ambiguous and nothing is buffered", () => {
+  test.describe("exercise-only messages", () => {
+    test("shows a plain picker when the exercise is ambiguous and nothing is buffered", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({
           exerciseOptions: [SHOULDER_PRESS, MILITARY_PRESS],
@@ -205,7 +250,7 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         {
           type: "showPicker",
           options: [SHOULDER_PRESS, MILITARY_PRESS],
@@ -214,21 +259,21 @@ describe("planChatTurn", () => {
       ]);
     });
 
-    it("creates a block without sets when the exercise is unambiguous", () => {
+    test("creates a block without sets when the exercise is unambiguous", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({ autoResolvedExercise: BENCH_PRESS }),
         hasActiveBlock: false,
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         { type: "ensureBlockAndAppend", exercise: BENCH_PRESS, sets: [] },
       ]);
     });
   });
 
-  describe("auto-pick flow (sets + ambiguous exercise in one turn)", () => {
-    it("auto-picks the top option and emits switch alternates", () => {
+  test.describe("auto-pick flow (sets + ambiguous exercise in one turn)", () => {
+    test("auto-picks the top option and emits switch alternates", () => {
       // User: "overhead press 40kg 3x10"
       const sets = setsOf(3, 10, 40);
       const actions = planChatTurn({
@@ -240,7 +285,7 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         {
           type: "ensureBlockAndAppend",
           exercise: SHOULDER_PRESS,
@@ -251,8 +296,8 @@ describe("planChatTurn", () => {
     });
   });
 
-  describe("multi-exercise turns", () => {
-    it("emits a block-append per exercise when the user logs two lifts in one message", () => {
+  test.describe("multi-exercise turns", () => {
+    test("emits a block-append per exercise when the user logs two lifts in one message", () => {
       // User: "squat 160kg 1 rep, deadlift 200kg 1 rep"
       const squatSet: SetDetail[] = [
         { setNumber: 1, reps: 1, weight: 160, weightUnit: "kg" },
@@ -270,13 +315,13 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         { type: "ensureBlockAndAppend", exercise: SQUAT, sets: squatSet },
         { type: "ensureBlockAndAppend", exercise: DEADLIFT, sets: deadliftSet },
       ]);
     });
 
-    it("still emits the additional block when the primary exercise was ambiguous and auto-picked", () => {
+    test("still emits the additional block when the primary exercise was ambiguous and auto-picked", () => {
       const overheadSets = setsOf(3, 10, 40);
       const deadliftSet: SetDetail[] = [
         { setNumber: 1, reps: 5, weight: 200, weightUnit: "kg" },
@@ -291,7 +336,7 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         {
           type: "ensureBlockAndAppend",
           exercise: SHOULDER_PRESS,
@@ -302,7 +347,7 @@ describe("planChatTurn", () => {
       ]);
     });
 
-    it("logs additional exercises even when the primary exercise signal is missing", () => {
+    test("logs additional exercises even when the primary exercise signal is missing", () => {
       const deadliftSet: SetDetail[] = [
         { setNumber: 1, reps: 3, weight: 180, weightUnit: "kg" },
       ];
@@ -314,14 +359,14 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         { type: "ensureBlockAndAppend", exercise: DEADLIFT, sets: deadliftSet },
       ]);
     });
   });
 
-  describe("reset active block sets", () => {
-    it("flags resetSetsBeforeAppend on ensureBlockAndAppend when the auto-resolved exercise is a fresh start", () => {
+  test.describe("reset active block sets", () => {
+    test("flags resetSetsBeforeAppend on ensureBlockAndAppend when the auto-resolved exercise is a fresh start", () => {
       const ramp = setsOf(4, 0, 60).map((set, index) => ({
         ...set,
         weight: [60, 80, 100, 115][index] ?? 60,
@@ -337,7 +382,7 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         {
           type: "ensureBlockAndAppend",
           exercise: BENCH_PRESS,
@@ -347,7 +392,7 @@ describe("planChatTurn", () => {
       ]);
     });
 
-    it("emits a standalone resetActiveBlockSets action when only sets (no exercise) are supplied with the reset flag", () => {
+    test("emits a standalone resetActiveBlockSets action when only sets (no exercise) are supplied with the reset flag", () => {
       const ramp = [
         { setNumber: 1, reps: null, weight: 60, weightUnit: "kg" as const },
         { setNumber: 2, reps: null, weight: 80, weightUnit: "kg" as const },
@@ -363,13 +408,13 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         { type: "resetActiveBlockSets" },
         { type: "appendToActiveBlock", sets: ramp },
       ]);
     });
 
-    it("emits scaleActiveBlockReps when the suggestion carries the flag and a block is active", () => {
+    test("emits scaleActiveBlockReps when the suggestion carries the flag and a block is active", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({
           scaleActiveBlockReps: { targetRpe: 8 },
@@ -377,12 +422,12 @@ describe("planChatTurn", () => {
         hasActiveBlock: true,
         bufferedSets: [],
       });
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         { type: "scaleActiveBlockReps", targetRpe: 8 },
       ]);
     });
 
-    it("ignores scaleActiveBlockReps when there is no active block", () => {
+    test("ignores scaleActiveBlockReps when there is no active block", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({
           scaleActiveBlockReps: { targetRpe: 8 },
@@ -395,7 +440,7 @@ describe("planChatTurn", () => {
       ).toBe(false);
     });
 
-    it("ignores the reset flag when there is no active block", () => {
+    test("ignores the reset flag when there is no active block", () => {
       const ramp = setsOf(2, 5, 60);
       const actions = planChatTurn({
         suggestion: makeSuggestion({
@@ -410,7 +455,7 @@ describe("planChatTurn", () => {
       expect(actions[0]).toMatchObject({ type: "bufferSets" });
     });
 
-    it("targets the scale-weights action at EVERY block in a multi-exercise turn", () => {
+    test("targets the scale-weights action at EVERY block in a multi-exercise turn", () => {
       // Regression for "bench press, dips, shoulder press, 2 warmup sets,
       // 3 working sets at 5 reps" — previously only the active (last)
       // block got warmup-scaled, leaving bench and dips untouched.
@@ -446,7 +491,7 @@ describe("planChatTurn", () => {
       expect(scale?.warmupStartPct).toBe(0.3);
     });
 
-    it("omits exerciseSlugs for single-block scale-weights turns (fallback to active block)", () => {
+    test("omits exerciseSlugs for single-block scale-weights turns (fallback to active block)", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({
           scaleActiveBlockWeights: { targetRpe: 8 },
@@ -455,14 +500,14 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         { type: "scaleActiveBlockWeights", targetRpe: 8 },
       ]);
     });
   });
 
-  describe("conversational fallback", () => {
-    it("uses a neutral nudge when there is no reply and no workout signal", () => {
+  test.describe("conversational fallback", () => {
+    test("uses a neutral nudge when there is no reply and no workout signal", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({
           userMessage: "mystery text",
@@ -476,7 +521,7 @@ describe("planChatTurn", () => {
       expect(reply?.text).not.toContain("could not match");
     });
 
-    it("uses the AI reply when present", () => {
+    test("uses the AI reply when present", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({
           userMessage: "hello",
@@ -485,12 +530,12 @@ describe("planChatTurn", () => {
         hasActiveBlock: false,
         bufferedSets: [],
       });
-      expect(actions).toEqual<ChatAction[]>([{ type: "reply", text: "Hi there!" }]);
+      expect(actions).toEqual([{ type: "reply", text: "Hi there!" }]);
     });
   });
 
-  describe("block operations", () => {
-    it("applies block ops and returns early when no sets/updates follow", () => {
+  test.describe("block operations", () => {
+    test("applies block ops and returns early when no sets/updates follow", () => {
       const actions = planChatTurn({
         suggestion: makeSuggestion({
           blockOperations: [{ kind: "remove", exerciseSlug: "bench-press" }],
@@ -499,7 +544,7 @@ describe("planChatTurn", () => {
         bufferedSets: [],
       });
 
-      expect(actions).toEqual<ChatAction[]>([
+      expect(actions).toEqual([
         {
           type: "applyBlockOps",
           operations: [{ kind: "remove", exerciseSlug: "bench-press" }],
