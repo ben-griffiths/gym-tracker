@@ -25,10 +25,8 @@ export function UserWeightUnitRadioGroup({
       >
         Weight units
       </p>
-      <p className="text-[11px] leading-snug text-muted-foreground/90">
-        Display inputs, summaries, and chat hints follow this preference.
-        Persisted workouts keep each set&apos;s stored weight and unit; strength
-        math converts through canonical kg when needed (no double conversion).
+      <p className="text-xs leading-snug text-muted-foreground/80">
+        Display unit only.
       </p>
       <div
         role="radiogroup"

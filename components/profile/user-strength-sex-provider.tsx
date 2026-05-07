@@ -1,6 +1,13 @@
 "use client";
 
 import {
+  DEFAULT_USER_STRENGTH_SEX,
+  parseUserStrengthSex,
+  readUserStrengthSexFromStorage,
+  USER_STRENGTH_SEX_STORAGE_KEY,
+  type UserStrengthSex,
+} from "@/lib/user-strength-sex";
+import {
   createContext,
   useCallback,
   useContext,
@@ -9,13 +16,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  DEFAULT_USER_STRENGTH_SEX,
-  USER_STRENGTH_SEX_STORAGE_KEY,
-  type UserStrengthSex,
-  parseUserStrengthSex,
-  readUserStrengthSexFromStorage,
-} from "@/lib/user-strength-sex";
 
 export const LIFTLOG_STRENGTH_SEX_CHANGE_EVENT = "liftlog-user-strength-sex-change";
 

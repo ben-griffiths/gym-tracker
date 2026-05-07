@@ -58,14 +58,16 @@ export async function updateSession(request: NextRequest) {
   );
 
   const { pathname } = request.nextUrl;
-  const isAuthRoute = pathname === "/auth";
+  const isAuthFormPage = pathname === "/auth";
+  const isAuthDelegatedRoute = pathname.startsWith("/auth/");
+  const allowsWithoutSignedInUser = isAuthFormPage || isAuthDelegatedRoute;
   const isApiRoute = pathname.startsWith("/api/");
 
   const bypassViaEnv = process.env.PLAYWRIGHT_BYPASS_AUTH === "true";
   const bypassViaDevHeader = playwrightRequestBypassesAuth(request.headers);
 
   if (bypassViaEnv || bypassViaDevHeader) {
-    if (isAuthRoute) {
+    if (allowsWithoutSignedInUser) {
       const url = request.nextUrl.clone();
       url.pathname = "/";
       return withPlaywrightBypassCookie(NextResponse.redirect(url));
@@ -89,13 +91,13 @@ export async function updateSession(request: NextRequest) {
     user = session?.user ?? null;
   }
 
-  if (!user && !isAuthRoute && !isApiRoute) {
+  if (!user && !allowsWithoutSignedInUser && !isApiRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth";
     return NextResponse.redirect(url);
   }
 
-  if (user && isAuthRoute) {
+  if (user && isAuthFormPage) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);
