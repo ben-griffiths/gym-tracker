@@ -129,6 +129,7 @@ export default function HomePage() {
               <div className="w-full border-t border-border/50">
                 <Link
                   href="/strength"
+                  prefetch
                   className="group flex h-[45px] min-h-[45px] w-full min-w-0 items-center justify-between gap-2 px-4 text-xs font-medium text-primary transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span>View full exercise overview</span>
@@ -219,6 +220,7 @@ export default function HomePage() {
             <div className="w-full border-t border-border/50">
               <Link
                 href="/rep-maxes"
+                prefetch
                 className="group flex h-[45px] min-h-[45px] w-full min-w-0 items-center justify-between gap-2 px-4 text-xs font-medium text-primary transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span>View rep max table</span>
@@ -318,6 +320,7 @@ export default function HomePage() {
                           ) : null}
                           <Link
                             href={`/workout/${encodeURIComponent(session.id)}`}
+                            prefetch
                             aria-label={`Edit ${session.name}`}
                             className="inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >

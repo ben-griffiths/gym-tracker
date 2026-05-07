@@ -4,8 +4,8 @@
 // flushes when online.
 //
 // Versioned cache name lets us bump and clear stale entries on deploy.
-const SHELL_CACHE = "liftlog-shell-v8";
-const RUNTIME_CACHE = "liftlog-runtime-v8";
+const SHELL_CACHE = "liftlog-shell-v9";
+const RUNTIME_CACHE = "liftlog-runtime-v9";
 const OFFLINE_FALLBACK = "/";
 
 // Precache every top-level navigation. Without this, visiting /strength or
@@ -18,6 +18,7 @@ const OFFLINE_FALLBACK = "/";
 //
 // Exercise detail URLs are unbounded; we precache the library + common slugs
 // linked from audits / home so first-open offline covers main catalog paths.
+// Keep in sync with `lib/precache-nav-routes.ts`.
 const PRECACHE_NAV_ROUTES = [
   "/",
   "/workout",

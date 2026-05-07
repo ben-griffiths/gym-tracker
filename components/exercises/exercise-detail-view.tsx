@@ -206,7 +206,11 @@ export function ExerciseDetailView({ exercise }: ExerciseDetailViewProps) {
         ) : null}
 
         <p className="text-center text-xs text-muted-foreground">
-          <Link href="/exercises" className="underline-offset-4 hover:underline">
+          <Link
+            href="/exercises"
+            prefetch
+            className="underline-offset-4 hover:underline"
+          >
             ← Back to library
           </Link>
         </p>
