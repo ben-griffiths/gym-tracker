@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { ThemeModeRadioGroup } from "@/components/layout/theme-toggle";
+import { UserStrengthSexRadioGroup } from "@/components/profile/user-strength-sex-radio-group";
+import { UserWeightUnitRadioGroup } from "@/components/profile/user-weight-unit-radio-group";
 import { cn } from "@/lib/utils";
 
 function initialFromEmail(email: string | null | undefined) {
@@ -122,6 +124,8 @@ export function AvatarCircle({ className }: AvatarCircleProps) {
             {email ?? "No email"}
           </p>
           <ThemeModeRadioGroup className="mt-3" />
+          <UserStrengthSexRadioGroup className="mt-3 border-t border-border pt-3" />
+          <UserWeightUnitRadioGroup className="mt-3 border-t border-border pt-3" />
           <button
             type="button"
             onClick={handleSignOut}

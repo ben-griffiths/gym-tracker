@@ -7,9 +7,17 @@ import { ExternalLink } from "lucide-react";
 import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
 import { Badge } from "@/components/ui/badge";
 import { useAppHeaderCenter } from "@/components/layout/app-header-center-context";
+import { ExerciseEmgSection } from "@/components/exercises/exercise-emg-section";
 import { ExercisePersonalStats } from "@/components/exercises/exercise-personal-stats";
+import { useUserWeightUnit } from "@/components/profile/user-weight-unit-provider";
 import type { ExerciseRecord } from "@/lib/exercises";
 import type { StrengthTier } from "@/lib/lift-profiles";
+import {
+  formatWeightKgForDisplay,
+  suffixForUnit,
+  toKg,
+  type WeightUnitPreference,
+} from "@/lib/weight-units";
 
 type StandardLevelKey =
   keyof NonNullable<NonNullable<ExerciseRecord["standards"]>["male"]>;
@@ -28,6 +36,7 @@ type ExerciseDetailViewProps = {
 
 export function ExerciseDetailView({ exercise }: ExerciseDetailViewProps) {
   const { setCustomTitle } = useAppHeaderCenter();
+  const { weightUnit: displayUnit } = useUserWeightUnit();
 
   useEffect(() => {
     setCustomTitle(exercise.name);
@@ -36,11 +45,11 @@ export function ExerciseDetailView({ exercise }: ExerciseDetailViewProps) {
 
   const cat = exercise.category?.trim();
   const standards = exercise.standards;
-  const unitLabel = standards?.unit === "lb" ? "lb" : "kg";
+  const displaySuffix = suffixForUnit(displayUnit);
 
   return (
     <div className="flex flex-col bg-background pb-12 pt-4">
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 sm:px-6">
+      <div className="flex w-full flex-col gap-6">
         <header className="flex flex-col gap-4 rounded-3xl border bg-gradient-to-b from-card to-card/80 p-5 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-muted/60 sm:h-24 sm:w-24">
@@ -69,7 +78,7 @@ export function ExerciseDetailView({ exercise }: ExerciseDetailViewProps) {
                 ) : null}
                 {standards ? (
                   <Badge variant="outline" className="text-xs">
-                    Strength standards
+                    1RM reference
                   </Badge>
                 ) : null}
               </div>
@@ -88,14 +97,18 @@ export function ExerciseDetailView({ exercise }: ExerciseDetailViewProps) {
 
         <ExercisePersonalStats catalogSlug={exercise.slug} />
 
+        <ExerciseEmgSection slug={exercise.slug} />
+
         {standards ? (
           <section className="rounded-2xl border bg-card p-5 shadow-sm">
             <h2 className="text-sm font-semibold tracking-tight">
-              Reference 1RM levels
+              Reference 1RM table
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Published one-rep max benchmarks ({unitLabel}) from the catalog
-              source. Compare to your estimated 1RM above.
+              Published one-rep max benchmarks converted to{" "}
+              <span className="font-medium">{displaySuffix}</span>{" "}
+              for display using your profile preference (catalog source publishes
+              in its native unit).
             </p>
             <div className="mt-4 overflow-x-auto rounded-xl border">
               <table className="w-full min-w-[280px] border-collapse text-sm">
@@ -107,24 +120,33 @@ export function ExerciseDetailView({ exercise }: ExerciseDetailViewProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {TIER_ROW.map((row) => {
-                    const m = standards.male?.[row.stdKey];
-                    const f = standards.female?.[row.stdKey];
-                    return (
-                      <tr
-                        key={row.tier}
-                        className="border-b border-border/60 last:border-0"
-                      >
-                        <td className="px-3 py-2.5 font-medium">{row.tier}</td>
-                        <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
-                          {m != null ? `${m} ${unitLabel}` : "—"}
-                        </td>
-                        <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
-                          {f != null ? `${f} ${unitLabel}` : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {(() => {
+                    const catalogMassUnit: WeightUnitPreference =
+                      standards.unit === "lb" ? "lb" : "kg";
+                    function cell(raw: number | undefined) {
+                      if (raw == null) return "—";
+                      const kgMass = toKg(raw, catalogMassUnit);
+                      return `${formatWeightKgForDisplay(kgMass, displayUnit)} ${displaySuffix}`;
+                    }
+                    return TIER_ROW.map((row) => {
+                      const m = standards.male?.[row.stdKey];
+                      const f = standards.female?.[row.stdKey];
+                      return (
+                        <tr
+                          key={row.tier}
+                          className="border-b border-border/60 last:border-0"
+                        >
+                          <td className="px-3 py-2.5 font-medium">{row.tier}</td>
+                          <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
+                            {cell(m)}
+                          </td>
+                          <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
+                            {cell(f)}
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -141,7 +163,7 @@ export function ExerciseDetailView({ exercise }: ExerciseDetailViewProps) {
         ) : (
           <section className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-5">
             <h2 className="text-sm font-semibold tracking-tight">
-              Reference 1RM levels
+              Reference 1RM table
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
               This exercise does not have published strength-standard rows in the
@@ -176,14 +198,14 @@ export function ExerciseDetailView({ exercise }: ExerciseDetailViewProps) {
                   <li key={i} className="pl-1">
                     <p className="leading-relaxed">{step.text}</p>
                     {step.imagePath ? (
-                      <div className="relative mt-2 aspect-video w-full max-w-md overflow-hidden rounded-xl border bg-muted">
+                      <div className="relative mt-2 aspect-video w-full overflow-hidden rounded-xl border bg-muted">
                         <Image
                           src={step.imagePath}
                           alt=""
                           fill
                           className="object-contain"
                           unoptimized
-                          sizes="(max-width: 768px) 100vw, 28rem"
+                          sizes="(max-width: 768px) 100vw, 100vw"
                         />
                       </div>
                     ) : null}

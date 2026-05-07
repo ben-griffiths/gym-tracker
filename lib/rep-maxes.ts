@@ -5,7 +5,9 @@ import {
   searchExercises,
 } from "@/lib/exercises";
 import { toKg } from "@/lib/lift-profiles";
+import type { UserStrengthSex } from "@/lib/user-strength-sex";
 import { estimateOneRm } from "@/lib/rep-percentages";
+import { repMaxPopularityIndex } from "@/lib/rep-maxes-popularity";
 import { flattenSets, type HistorySession } from "@/lib/workout-history";
 
 export type EstimateSource = {
@@ -41,30 +43,28 @@ type Agg = {
 };
 
 /**
- * “Average” strength for rep-maxes inference = **intermediate** tier from the
- * StrengthLevel-derived catalog (`ExerciseRecord.standards`).
+ * Catalog rep-maxes inference = **intermediate** tier from the StrengthLevel-derived
+ * catalog (`ExerciseRecord.standards`).
  *
- * **Gender:** the app does not collect sex for this screen. When both `male`
- * and `female` intermediate 1RM values exist, use their **arithmetic mean**
- * (neutral). If only one side is present, use that value. Values are converted
- * to **kg** using {@link toKg} when `standards.unit` is `lb`.
+ * Uses the StrengthLevel column for {@link sex}; if intermediate is missing there,
+ * falls back to the opposite column. Converts to kg when `standards.unit` is `lb`.
  *
- * Returns `null` when standards are missing or neither side defines
- * intermediate — typical for bodyweight-only entries with no load numbers.
+ * Returns `null` when standards are missing or neither side defines intermediate —
+ * typical for bodyweight-only entries with no load numbers.
  */
 export function catalogIntermediateOneRmKg(
   exercise: ExerciseRecord,
+  sex: UserStrengthSex = "male",
 ): number | null {
   const std = exercise.standards;
   if (!std) return null;
   const m = std.male?.intermediate;
   const f = std.female?.intermediate;
   const unit = std.unit === "lb" ? "lb" : "kg";
-  let valueInStdUnit: number | null = null;
-  if (m != null && f != null) valueInStdUnit = (m + f) / 2;
-  else if (m != null) valueInStdUnit = m;
-  else if (f != null) valueInStdUnit = f;
-  else return null;
+  const primary = sex === "male" ? m : f;
+  const fallback = sex === "male" ? f : m;
+  const valueInStdUnit = primary ?? fallback;
+  if (valueInStdUnit == null) return null;
   return toKg(valueInStdUnit, unit);
 }
 
@@ -89,7 +89,7 @@ function entryToRow(slug: string, entry: Agg): RepMaxRow {
   };
 }
 
-/** Sort key matches table “Est 1RM”: higher estimated 1RM (kg) first; tie-break BW reps, then name. */
+/** Sort key matches table “Est 1RM”: higher estimated 1RM (kg) first; tie-break popularity, then name. */
 export function compareRowsWithLoggedDataDesc(a: RepMaxRow, b: RepMaxRow) {
   const aEst = a.estimatedOneRm ?? 0;
   const bEst = b.estimatedOneRm ?? 0;
@@ -97,17 +97,24 @@ export function compareRowsWithLoggedDataDesc(a: RepMaxRow, b: RepMaxRow) {
   const aReps = a.bestBodyweightReps ?? 0;
   const bReps = b.bestBodyweightReps ?? 0;
   if (bReps !== aReps) return bReps - aReps;
+  const pa = repMaxPopularityIndex(a.slug);
+  const pb = repMaxPopularityIndex(b.slug);
+  if (pa !== pb) return pa - pb;
   return a.exerciseName.localeCompare(b.exerciseName, undefined, {
     sensitivity: "base",
   });
 }
 
 /**
- * Catalog-only (“other”) rows: sort by catalog Est 1RM (kg) **descending**;
- * missing estimates (`null`, em dash in UI) sort **after** all numeric values.
- * Stable tie-break: **exercise name** A–Z.
+ * Catalog-only (“untracked”) rows: sort by **rough popularity** first, then catalog Est
+ * 1RM (kg) **descending**; missing estimates (`null`, em dash in UI) sort **after** all
+ * numeric values. Stable tie-break: **exercise name** A–Z.
  */
 export function compareCatalogOnlyRowsDesc(a: RepMaxRow, b: RepMaxRow) {
+  const popA = repMaxPopularityIndex(a.slug);
+  const popB = repMaxPopularityIndex(b.slug);
+  if (popA !== popB) return popA - popB;
+
   const aNum = a.estimatedOneRm != null;
   const bNum = b.estimatedOneRm != null;
   if (aNum && bNum) {
@@ -129,13 +136,17 @@ export type RepMaxTableItem =
 
 /**
  * Single ordered list for the rep-maxes table: rows **with** workout history
- * first (descending by estimated 1RM in kg, then bodyweight reps, then name),
- * then — when both blocks are non-empty — a **separator**, then **catalog**
- * exercises with no logs (Est 1RM descending per {@link compareCatalogOnlyRowsDesc}).
+ * first (descending by estimated 1RM in kg, then bodyweight reps, then rough
+ * popularity among ties, then name), then — when both blocks are non-empty — a **separator**, then **catalog**
+ * exercises with no logs (rough popularity first, then Est 1RM per {@link compareCatalogOnlyRowsDesc}).
  * Unlogged catalog rows get Est 1RM from {@link catalogIntermediateOneRmKg} when
- * standards exist.
+ * standards exist, using the selected strength standard (male/female StrengthLevel
+ * column, with fallback).
  */
-export function buildRepMaxRows(sessions: HistorySession[]): RepMaxTableItem[] {
+export function buildRepMaxRows(
+  sessions: HistorySession[],
+  strengthSex: UserStrengthSex = "male",
+): RepMaxTableItem[] {
   const byExercise = new Map<string, Agg>();
 
   for (const session of sessions) {
@@ -195,7 +206,7 @@ export function buildRepMaxRows(sessions: HistorySession[]): RepMaxTableItem[] {
   const catalogOnly: RepMaxRow[] = [];
   for (const ex of EXERCISES) {
     if (byExercise.has(ex.slug)) continue;
-    const inferredKg = catalogIntermediateOneRmKg(ex);
+    const inferredKg = catalogIntermediateOneRmKg(ex, strengthSex);
     catalogOnly.push({
       slug: ex.slug,
       exerciseName: ex.name,

@@ -11,7 +11,7 @@ import { navigateBackFromWorkoutOffline } from "@/lib/workout-nav";
 
 const PAGE_HEADER_TITLES: Record<string, string> = {
   "/strength": "Strength",
-  "/rep-maxes": "Rep maxes",
+  "/rep-maxes": "Maxes",
   "/exercises": "Exercise library",
 };
 

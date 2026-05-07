@@ -34,22 +34,39 @@ export default function AuthPage() {
     setInfoMessage(null);
 
     try {
+      /* Hard navigation avoids replaying prefetched `/` RSC payloads from before cookies existed (header Link). */
+      function finishSignedIn() {
+        window.location.assign("/");
+      }
+
       if (mode === "login") {
         const { error } = await client.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        router.replace("/");
+        finishSignedIn();
         return;
       }
 
-      const { data, error } = await client.auth.signUp({ email, password });
+      const redirectTo =
+        typeof window !== "undefined" ? `${window.location.origin}/` : undefined;
+      const { data, error } = await client.auth.signUp({
+        email,
+        password,
+        options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+      });
       if (error) throw error;
 
       if (!data.session) {
-        setInfoMessage("Account created. Check your email to confirm your account.");
+        setMode("login");
+        setInfoMessage(
+          "Email invitation sent. Open the confirmation link in your email to finish signing in. " +
+            'For immediate access after sign-up, turn off "Confirm email" for the Email provider ' +
+            "in the Supabase dashboard (Authentication → Providers → Email).",
+        );
+        router.replace("/auth", { scroll: false });
         return;
       }
 
-      router.replace("/");
+      finishSignedIn();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Authentication failed.";
       setErrorMessage(message);

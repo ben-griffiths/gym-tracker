@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getExerciseBySlug } from "@/lib/exercises";
+import { getExerciseBySlug, rankExercisesForQuery } from "@/lib/exercises";
 import type { ExerciseRank } from "@/lib/exercises";
 import {
   buildOrderedExerciseSlugHints,
   coerceModelWorkoutXmlFragment,
   extractCurrentExerciseSlug,
+  extractExerciseQueryFromMessage,
   extractWorkoutXml,
   mightChangeExercise,
   sanitizeWorkoutXml,
@@ -41,9 +42,10 @@ describe("buildOrderedExerciseSlugHints", () => {
     const current = extractCurrentExerciseSlug(benchXml);
     expect(current).toBe("bench-press");
 
+    const hip = getExerciseBySlug("hip-adduction")!;
     const hints = buildOrderedExerciseSlugHints(
       current,
-      ["hip-adduction"],
+      [{ exercise: hip, score: 600 }],
       true,
       "add 2 warmups",
     );
@@ -52,13 +54,31 @@ describe("buildOrderedExerciseSlugHints", () => {
   });
 
   it("includes ranks on empty log (new prescription)", () => {
+    const bench = getExerciseBySlug("bench-press")!;
+    const squat = getExerciseBySlug("squat")!;
     const hints = buildOrderedExerciseSlugHints(
       "",
-      ["bench-press", "squat"],
+      [
+        { exercise: bench, score: 9_000 },
+        { exercise: squat, score: 500 },
+      ],
       false,
       "bench 5x5",
     );
     expect(hints[0]).toBe("bench-press");
+  });
+
+  it("adds ranked candidates when the message names a different lift", () => {
+    const msg = "Strict Curl 1x1 @ 65kg";
+    const ranks = rankExercisesForQuery(extractExerciseQueryFromMessage(msg), 5);
+    const hints = buildOrderedExerciseSlugHints(
+      "military-press",
+      ranks,
+      true,
+      msg,
+    );
+    expect(hints[0]).toBe("military-press");
+    expect(hints).toContain("strict-curl");
   });
 });
 

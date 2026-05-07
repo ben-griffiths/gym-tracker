@@ -3,8 +3,12 @@ import {
   getExerciseBySlug,
   searchExercises,
 } from "@/lib/exercises";
+import type { UserStrengthSex } from "@/lib/user-strength-sex";
 import { estimateOneRm } from "@/lib/rep-percentages";
 import { flattenSets, type HistorySession } from "@/lib/workout-history";
+import { toKg } from "@/lib/weight-units";
+
+export { toKg };
 
 export type StrengthTier =
   | "Beginner"
@@ -54,18 +58,27 @@ export function tierThresholdMap(thresholds: Thresholds): Record<StrengthTier, n
   };
 }
 
-export function toKg(weight: number, unit?: string) {
-  if ((unit ?? "kg") === "lb") return weight * 0.45359237;
-  return weight;
+/**
+ * Prefer the thresholds for {@link sex}, then the other sex if that column is missing.
+ */
+export function thresholdsForStrengthSex(
+  standards: {
+    male: Thresholds | null;
+    female: Thresholds | null;
+  },
+  sex: UserStrengthSex,
+): Thresholds | null {
+  const primary = sex === "male" ? standards.male : standards.female;
+  const fallback = sex === "male" ? standards.female : standards.male;
+  return primary ?? fallback ?? null;
 }
 
+/** @deprecated Prefer {@link thresholdsForStrengthSex} with explicit sex */
 export function combineThresholds(standards: {
   male: Thresholds | null;
   female: Thresholds | null;
 }): Thresholds | null {
-  // Conservative baseline to avoid inflated levels: prefer male thresholds
-  // when available, otherwise fall back to female.
-  return standards.male ?? standards.female;
+  return thresholdsForStrengthSex(standards, "male");
 }
 
 function monotonicThresholdPoints(thresholds: Thresholds): number[] {
@@ -156,7 +169,10 @@ export function tierFromScore(score: number): StrengthTier {
   return "Elite";
 }
 
-export function computeLiftProfiles(sessions: HistorySession[]): LiftProfile[] {
+export function computeLiftProfiles(
+  sessions: HistorySession[],
+  strengthSex: UserStrengthSex = "male",
+): LiftProfile[] {
   const byExercise = new Map<string, number>();
 
   for (const session of sessions) {
@@ -189,7 +205,7 @@ export function computeLiftProfiles(sessions: HistorySession[]): LiftProfile[] {
     const record = getExerciseBySlug(slug);
     const name = record?.name ?? slug.replace(/-/g, " ");
     const thresholds = record?.standards
-      ? combineThresholds(record.standards)
+      ? thresholdsForStrengthSex(record.standards, strengthSex)
       : null;
     if (!thresholds) {
       profiles.push({

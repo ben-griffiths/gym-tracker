@@ -1,9 +1,10 @@
 "use client";
 
 import { ExerciseIconImage } from "@/components/workout/exercise-icon-image";
-import { useMemo } from "react";
-import { Dumbbell } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Dumbbell, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { getExerciseBySlug } from "@/lib/exercises";
 import { useHistoryGroups } from "@/lib/sync/workouts-live";
 import { AverageLiftLevelCard } from "@/components/strength/average-lift-level-card";
@@ -15,6 +16,13 @@ import {
   type StrengthTier,
 } from "@/lib/lift-profiles";
 import { StrengthLevelBar } from "@/components/strength/strength-level-bar";
+import { useUserStrengthSex } from "@/components/profile/user-strength-sex-provider";
+import { useUserWeightUnit } from "@/components/profile/user-weight-unit-provider";
+import { exerciseMatchesSearchQuery } from "@/lib/exercise-search-query";
+import {
+  formatWeightKgForDisplay,
+  suffixForUnit,
+} from "@/lib/weight-units";
 
 function tierIndex(tier: StrengthTier): number {
   return TIERS.indexOf(tier);
@@ -22,14 +30,17 @@ function tierIndex(tier: StrengthTier): number {
 
 export default function StrengthOverviewPage() {
   const historyQuery = useHistoryGroups();
+  const { strengthSex } = useUserStrengthSex();
+  const { weightUnit } = useUserWeightUnit();
+  const [strengthSearchQuery, setStrengthSearchQuery] = useState("");
 
   const sessions = (historyQuery.data?.groups ?? []).flatMap((group) =>
     group.sessions,
   );
 
   const liftProfiles = useMemo(
-    () => computeLiftProfiles(sessions),
-    [sessions],
+    () => computeLiftProfiles(sessions, strengthSex),
+    [sessions, strengthSex],
   );
 
   const averageStrength = useMemo(
@@ -44,6 +55,33 @@ export default function StrengthOverviewPage() {
   const unscored = liftProfiles.filter(
     (lift) => lift.score === null || lift.tier === null,
   );
+
+  const scoredFiltered = useMemo(
+    () =>
+      scored.filter((lift) =>
+        exerciseMatchesSearchQuery(
+          lift.exerciseName,
+          lift.slug,
+          strengthSearchQuery,
+        ),
+      ),
+    [scored, strengthSearchQuery],
+  );
+  const unscoredFiltered = useMemo(
+    () =>
+      unscored.filter((lift) =>
+        exerciseMatchesSearchQuery(
+          lift.exerciseName,
+          lift.slug,
+          strengthSearchQuery,
+        ),
+      ),
+    [unscored, strengthSearchQuery],
+  );
+
+  const isSearchActive = strengthSearchQuery.trim().length > 0;
+  const hasFilteredRows =
+    scoredFiltered.length > 0 || unscoredFiltered.length > 0;
 
   const isLoading = historyQuery.isLoading;
   const isEmpty = !isLoading && liftProfiles.length === 0;
@@ -85,16 +123,40 @@ export default function StrengthOverviewPage() {
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
-              {scored.length > 0 ? (
+              {scoredFiltered.length > 0 ? (
                 <h2 className="text-sm font-semibold tracking-tight">
                   Tracked lifts
                 </h2>
               ) : null}
               <section className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+                <div className="border-b border-border/80 bg-card px-4 py-3">
+                  <label htmlFor="strength-search" className="sr-only">
+                    Filter strength lifts by exercise
+                  </label>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="strength-search"
+                      type="search"
+                      placeholder="Search exercises…"
+                      value={strengthSearchQuery}
+                      onChange={(e) =>
+                        setStrengthSearchQuery(e.target.value)
+                      }
+                      className="h-10 rounded-xl border-border/80 bg-muted/30 pl-9 text-sm shadow-none"
+                    />
+                  </div>
+                </div>
                 <div>
-                {scored.length > 0 ? (
+                {isSearchActive && !hasFilteredRows ? (
+                  <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    No exercises match your search.
+                  </div>
+                ) : (
+                  <>
+                {scoredFiltered.length > 0 ? (
                     <ul className="flex flex-col px-4">
-                      {scored.map((lift, index) => {
+                      {scoredFiltered.map((lift, index) => {
                         const record = getExerciseBySlug(lift.slug);
                         const percent = Math.round(lift.score * 100);
                         return (
@@ -140,7 +202,11 @@ export default function StrengthOverviewPage() {
                                   </div>
                                 </div>
                                 <p className="text-xs text-muted-foreground">
-                                  {Math.round(lift.oneRmKg)} kg estimated 1RM
+                                  {formatWeightKgForDisplay(
+                                    lift.oneRmKg,
+                                    weightUnit,
+                                  )}{" "}
+                                  {suffixForUnit(weightUnit)} estimated 1RM
                                 </p>
                               </div>
                             </div>
@@ -170,7 +236,10 @@ export default function StrengthOverviewPage() {
                                       </div>
                                       <div className="tabular-nums text-muted-foreground/80">
                                         {threshold !== undefined
-                                          ? `${Math.round(threshold)} kg`
+                                          ? `${formatWeightKgForDisplay(
+                                              threshold,
+                                              weightUnit,
+                                            )} ${suffixForUnit(weightUnit)}`
                                           : "—"}
                                       </div>
                                     </div>
@@ -184,9 +253,9 @@ export default function StrengthOverviewPage() {
                     </ul>
                 ) : null}
 
-                {unscored.length > 0 ? (
+                {unscoredFiltered.length > 0 ? (
                   <div>
-                    {scored.length > 0 ? (
+                    {scoredFiltered.length > 0 ? (
                       <div
                         className="mx-4 h-px bg-border/80 dark:bg-border/50"
                         aria-hidden
@@ -200,7 +269,7 @@ export default function StrengthOverviewPage() {
                       standards, so they aren&apos;t scored.
                     </p>
                     <ul className="flex flex-col px-4">
-                      {unscored.map((lift, index) => {
+                      {unscoredFiltered.map((lift, index) => {
                         const record = getExerciseBySlug(lift.slug);
                         return (
                           <li
@@ -231,7 +300,11 @@ export default function StrengthOverviewPage() {
                                 {lift.exerciseName}
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                {Math.round(lift.oneRmKg)} kg estimated 1RM
+                                {formatWeightKgForDisplay(
+                                  lift.oneRmKg,
+                                  weightUnit,
+                                )}{" "}
+                                {suffixForUnit(weightUnit)} estimated 1RM
                               </p>
                             </div>
                             <Badge variant="outline">No standard</Badge>
@@ -241,6 +314,8 @@ export default function StrengthOverviewPage() {
                     </ul>
                   </div>
                 ) : null}
+                  </>
+                )}
               </div>
             </section>
             </div>

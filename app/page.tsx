@@ -15,21 +15,29 @@ import { cn } from "@/lib/utils";
 import { getExerciseBySlug } from "@/lib/exercises";
 import { deleteWorkoutSession } from "@/lib/api";
 import {
-  computeVolume,
+  computeVolumeForDisplayPreference,
   flattenSets,
   formatWorkoutTitle,
   groupByExercise,
 } from "@/lib/workout-history";
 import { AverageLiftLevelCard } from "@/components/strength/average-lift-level-card";
+import { useUserStrengthSex } from "@/components/profile/user-strength-sex-provider";
+import { useUserWeightUnit } from "@/components/profile/user-weight-unit-provider";
 import {
   computeAverageStrength,
   computeLiftProfiles,
   type LiftProfile,
 } from "@/lib/lift-profiles";
+import {
+  formatWeightKgForDisplay,
+  suffixForUnit,
+} from "@/lib/weight-units";
 
 export default function HomePage() {
   /** Session-only: hidden after dismiss until the next full page load. */
   const [maxesHintVisible, setMaxesHintVisible] = useState(true);
+  const { strengthSex } = useUserStrengthSex();
+  const { weightUnit } = useUserWeightUnit();
 
   function dismissMaxesHint() {
     setMaxesHintVisible(false);
@@ -57,8 +65,8 @@ export default function HomePage() {
   );
 
   const liftProfiles = useMemo(
-    () => computeLiftProfiles(sessions),
-    [sessions],
+    () => computeLiftProfiles(sessions, strengthSex),
+    [sessions, strengthSex],
   );
 
   const averageStrength = useMemo(
@@ -144,7 +152,7 @@ export default function HomePage() {
               <div className="flex w-full min-w-0 items-center justify-between gap-3">
                 <div className="min-w-0">
                   <h2 className="text-sm font-semibold tracking-tight">
-                    Key lift maxes
+                    Maxes
                   </h2>
                 </div>
                 {sbdTotalKg !== null ? (
@@ -152,7 +160,8 @@ export default function HomePage() {
                     variant="outline"
                     className="h-fit max-w-full shrink-0 border-emerald-200/80 bg-emerald-50 font-normal tabular-nums text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100"
                   >
-                    Total {Math.round(sbdTotalKg)} kg
+                    Total {formatWeightKgForDisplay(sbdTotalKg, weightUnit)}{" "}
+                    {suffixForUnit(weightUnit)}
                   </Badge>
                 ) : null}
               </div>
@@ -197,7 +206,11 @@ export default function HomePage() {
                         {entry.lift ? (
                           <>
                             <p className="text-sm font-semibold tabular-nums text-foreground">
-                              {Math.round(entry.lift.oneRmKg)} kg
+                              {formatWeightKgForDisplay(
+                                entry.lift.oneRmKg,
+                                weightUnit,
+                              )}{" "}
+                              {suffixForUnit(weightUnit)}
                             </p>
                             {entry.lift.tier ? (
                               <p className="mt-0.5 text-xs text-muted-foreground">
@@ -223,7 +236,7 @@ export default function HomePage() {
                 prefetch
                 className="group flex h-[45px] min-h-[45px] w-full min-w-0 items-center justify-between gap-2 px-4 text-xs font-medium text-primary transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <span>View rep max table</span>
+                <span>View maxes table</span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-45" />
               </Link>
             </div>
@@ -292,8 +305,11 @@ export default function HomePage() {
             <ul className="flex flex-col gap-3">
               {sessions.map((session) => {
                 const sets = flattenSets(session);
-                const exerciseGroups = groupByExercise(sets);
-                const { volume, unit: volumeUnit } = computeVolume(sets);
+                const exerciseGroups = groupByExercise(sets, {
+                  displayMassUnit: weightUnit,
+                });
+                const { volume, unitSuffix } =
+                  computeVolumeForDisplayPreference(sets, weightUnit);
                 return (
                   <li key={session.id}>
                     <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-card shadow-sm ring-1 ring-sky-500/[0.08] dark:border-border dark:ring-sky-400/10">
@@ -315,7 +331,7 @@ export default function HomePage() {
                               variant="outline"
                               className="border-emerald-200/80 bg-emerald-50/90 font-normal text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100"
                             >
-                              {volume.toLocaleString()} {volumeUnit}
+                              {volume.toLocaleString()} {unitSuffix}
                             </Badge>
                           ) : null}
                           <Link

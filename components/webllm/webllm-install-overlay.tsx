@@ -4,15 +4,11 @@ import { Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useWebllm } from "@/components/webllm/webllm-provider";
 
-/** Aligned with `AppHeader`: `h-[75px]` plus top safe area (see `app/layout.tsx`). */
-const BELOW_HEADER_TOP =
-  "top-[calc(75px+env(safe-area-inset-top,0px))]" as const;
-
 /**
- * While the on-device model is loading, shows either a **full-screen** install
- * experience during **network shard download** (first visit / cache eviction) or a
- * **slim progress strip** under the app header for cache-only reload and compile.
- * Surfaces the same retry affordance as before when `status === "error"`.
+ * While the on-device model is loading, shows a **full-screen** install experience
+ * during **network shard download** (`blockingInstallUi`). Cache read, GPU compile,
+ * and similar phases run **without** header progress chrome. Surfaces retry when
+ * `status === "error"`.
  */
 export function WebllmInstallOverlay() {
   const {
@@ -32,44 +28,11 @@ export function WebllmInstallOverlay() {
     Math.min(100, Math.round((progress?.progress ?? 0) * 100)),
   );
   const detail = (progress?.text ?? "").trim();
-  const slimCaption = detail || storagePersistenceHint || "";
 
   const showFullOverlay = isError || (status === "loading" && blockingInstallUi);
 
   if (!showFullOverlay) {
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        aria-busy
-        className={`pointer-events-none fixed ${BELOW_HEADER_TOP} right-0 left-0 z-30 border-b border-border/60 bg-card/90 backdrop-blur-sm`}
-      >
-        <div
-          className="h-1 w-full overflow-hidden bg-muted/80"
-          role="progressbar"
-          aria-valuenow={pct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Model load progress"
-        >
-          <div
-            className="h-full bg-primary transition-[width] duration-200 ease-out"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        {slimCaption ? (
-          <div className="flex min-h-7 items-center gap-2 px-3 py-1">
-            <Loader2Icon
-              className="size-3.5 shrink-0 animate-spin text-primary"
-              aria-hidden
-            />
-            <p className="min-w-0 flex-1 truncate text-[11px] leading-tight text-muted-foreground">
-              {slimCaption}
-            </p>
-          </div>
-        ) : null}
-      </div>
-    );
+    return null;
   }
 
   return (

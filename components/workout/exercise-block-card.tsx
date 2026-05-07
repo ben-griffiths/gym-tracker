@@ -38,6 +38,13 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { EffortFeel, ExerciseRecord } from "@/lib/types/workout";
 import { ExerciseGuideSheet } from "@/components/workout/exercise-guide-sheet";
+import {
+  formatWeightKgForDisplay,
+  parseWeightFieldInputToKg,
+  toKg,
+  type WeightUnitPreference,
+  weightFieldDraftFromStored,
+} from "@/lib/weight-units";
 
 export type BlockSet = {
   id: string;
@@ -64,10 +71,6 @@ function formatRepsDraft(reps: number | null) {
   return reps === null ? "" : String(reps);
 }
 
-function formatWeightDraft(weight: number | null) {
-  return weight === null ? "" : String(weight);
-}
-
 function parseRepsInput(raw: string): number | null | "invalid" {
   const t = raw.trim();
   if (t === "") return null;
@@ -76,30 +79,34 @@ function parseRepsInput(raw: string): number | null | "invalid" {
   return n;
 }
 
-function parseWeightInput(raw: string): number | null | "invalid" {
-  const t = raw.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  if (!Number.isFinite(n)) return "invalid";
-  return n;
-}
-
 function SetRowFieldsEditor({
   set,
+  displayWeightUnit,
   onCommit,
 }: {
   set: BlockSet;
+  displayWeightUnit: WeightUnitPreference;
   onCommit: (fields: SetFieldsCommit) => Promise<boolean>;
 }) {
   const [repsDraft, setRepsDraft] = useState(() => formatRepsDraft(set.reps));
   const [weightDraft, setWeightDraft] = useState(() =>
-    formatWeightDraft(set.weight),
+    weightFieldDraftFromStored(
+      set.weight,
+      set.weightUnit,
+      displayWeightUnit,
+    ),
   );
 
   const syncFromSet = useCallback(() => {
     setRepsDraft(formatRepsDraft(set.reps));
-    setWeightDraft(formatWeightDraft(set.weight));
-  }, [set.reps, set.weight]);
+    setWeightDraft(
+      weightFieldDraftFromStored(
+        set.weight,
+        set.weightUnit,
+        displayWeightUnit,
+      ),
+    );
+  }, [set.reps, set.weight, set.weightUnit, displayWeightUnit]);
 
   useEffect(() => {
     syncFromSet();
@@ -107,25 +114,25 @@ function SetRowFieldsEditor({
 
   const commitNow = useCallback(async () => {
     const r = parseRepsInput(repsDraft);
-    const w = parseWeightInput(weightDraft);
-    if (r === "invalid" || w === "invalid") {
+    const wKg = parseWeightFieldInputToKg(weightDraft, displayWeightUnit);
+    if (r === "invalid" || wKg === "invalid") {
       toast.error("Use a whole number for reps and a number for weight.");
       syncFromSet();
       return false;
     }
-    if (r === null && w === null) {
+    if (r === null && wKg === null) {
       toast.error("Enter at least reps or weight.");
       syncFromSet();
       return false;
     }
     const ok = await onCommit({
       reps: r,
-      weight: w,
-      weightUnit: set.weightUnit,
+      weight: wKg,
+      weightUnit: "kg",
     });
     if (!ok) syncFromSet();
     return ok;
-  }, [onCommit, repsDraft, set.weightUnit, syncFromSet, weightDraft]);
+  }, [onCommit, repsDraft, weightDraft, displayWeightUnit, syncFromSet]);
 
   const onFieldsKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -162,7 +169,7 @@ function SetRowFieldsEditor({
           type="text"
           inputMode="decimal"
           autoComplete="off"
-          aria-label={`Set ${set.setNumber} weight in ${set.weightUnit}`}
+          aria-label={`Set ${set.setNumber} weight in ${displayWeightUnit}`}
           className="h-7 w-14 shrink-0 px-1 text-center text-sm tabular-nums md:w-16"
           value={weightDraft}
           onChange={(e) => setWeightDraft(e.target.value)}
@@ -170,7 +177,7 @@ function SetRowFieldsEditor({
           onKeyDown={onFieldsKeyDown}
         />
         <span className="shrink-0 text-sm text-muted-foreground" aria-hidden>
-          {set.weightUnit}
+          {displayWeightUnit}
         </span>
       </span>
     </span>
@@ -197,6 +204,8 @@ function feelBadgeClass(feel: EffortFeel): string {
 type ExerciseBlockCardProps = {
   exercise: ExerciseRecord;
   sets: BlockSet[];
+  /** Loads shown/edited in this unit; parses to kg on commit (`weightUnit: 'kg'`). */
+  displayWeightUnit?: WeightUnitPreference;
   active?: boolean;
   collapsed?: boolean;
   /** Set when the card sits in the sticky exercise header stack (collapsed rows). */
@@ -229,20 +238,28 @@ function formatRepRange(sets: BlockSet[]): string {
   return min === max ? `${min} reps` : `${min}–${max} reps`;
 }
 
-function formatWeightRange(sets: BlockSet[]): string {
-  const weights = sets
-    .map((set) => set.weight)
+function formatWeightRange(
+  sets: BlockSet[],
+  displayUnit: WeightUnitPreference,
+): string {
+  const weightsKg = sets
+    .map((set) =>
+      set.weight !== null ? toKg(set.weight, set.weightUnit) : null,
+    )
     .filter((value): value is number => value !== null);
-  if (weights.length === 0) return "";
-  const min = Math.min(...weights);
-  const max = Math.max(...weights);
-  const unit = sets.find((set) => set.weight !== null)?.weightUnit ?? "kg";
-  return min === max ? `${min} ${unit}` : `${min}–${max} ${unit}`;
+  if (weightsKg.length === 0) return "";
+  const min = Math.min(...weightsKg);
+  const max = Math.max(...weightsKg);
+  const a = formatWeightKgForDisplay(min, displayUnit);
+  const b = formatWeightKgForDisplay(max, displayUnit);
+  const u = displayUnit;
+  return min === max ? `${a} ${u}` : `${a}–${b} ${u}`;
 }
 
 type ExerciseBlockSetRowSharedProps = {
   set: BlockSet;
   index: number;
+  displayWeightUnit: WeightUnitPreference;
   editableRows: boolean;
   showSetDuplicate: boolean;
   showSetDelete: boolean;
@@ -254,6 +271,7 @@ type ExerciseBlockSetRowSharedProps = {
 function ExerciseBlockSetRow({
   set,
   index,
+  displayWeightUnit,
   editableRows,
   showSetDuplicate,
   showSetDelete,
@@ -286,7 +304,7 @@ function ExerciseBlockSetRow({
           "relative z-[2] opacity-90 ring-2 ring-primary/35 ring-offset-2 ring-offset-background rounded-xl",
       )}
       data-set-row
-      data-weight-unit={set.weightUnit}
+      data-weight-unit={displayWeightUnit}
     >
       {index > 0 ? (
         <div
@@ -308,6 +326,7 @@ function ExerciseBlockSetRow({
           {editableRows ? (
             <SetRowFieldsEditor
               set={set}
+              displayWeightUnit={displayWeightUnit}
               onCommit={(fields) => onCommitSetRow!(set.id, fields)}
             />
           ) : (
@@ -325,10 +344,15 @@ function ExerciseBlockSetRow({
               </span>
               <span className="inline-flex min-w-0 items-baseline gap-1">
                 <span className="text-foreground tabular-nums">
-                  {set.weight !== null ? set.weight : "–"}
+                  {set.weight !== null
+                    ? formatWeightKgForDisplay(
+                        toKg(set.weight, set.weightUnit),
+                        displayWeightUnit,
+                      )
+                    : "–"}
                 </span>
                 <span className="text-sm text-muted-foreground">
-                  {set.weightUnit}
+                  {displayWeightUnit}
                 </span>
               </span>
             </>
@@ -434,6 +458,7 @@ function SortableExerciseSetRow(props: ExerciseBlockSetRowSharedProps) {
 
 function ExerciseBlockSetsList({
   sets,
+  displayWeightUnit,
   editableRows,
   showSetDuplicate,
   showSetDelete,
@@ -469,6 +494,7 @@ function ExerciseBlockSetsList({
     ExerciseBlockSetRowSharedProps,
     "set" | "index"
   > = {
+    displayWeightUnit,
     editableRows,
     showSetDuplicate,
     showSetDelete,
@@ -520,6 +546,7 @@ function ExerciseBlockSetsList({
 export function ExerciseBlockCard({
   exercise,
   sets,
+  displayWeightUnit = "kg",
   active,
   collapsed,
   sticky,
@@ -540,11 +567,12 @@ export function ExerciseBlockCard({
     summaryParts.push(`${sets.length} ${sets.length === 1 ? "set" : "sets"}`);
     const reps = formatRepRange(sets);
     if (reps !== "– reps") summaryParts.push(reps);
-    const weight = formatWeightRange(sets);
+    const weight = formatWeightRange(sets, displayWeightUnit);
     if (weight) summaryParts.push(weight);
   }
 
   const ChevronIcon = collapsed ? ChevronDown : ChevronUp;
+  /** Sheet includes steps when `guide` exists; otherwise EMG + maxes + standards link. */
   const showGuide = !deleted && Boolean(exercise.guide);
   const showDelete = !deleted && Boolean(onDelete);
   const showSetDelete = !deleted && Boolean(onDeleteSet);
@@ -668,6 +696,7 @@ export function ExerciseBlockCard({
         ) : (
           <ExerciseBlockSetsList
             sets={sets}
+            displayWeightUnit={displayWeightUnit}
             editableRows={editableRows}
             showSetDuplicate={showSetDuplicate}
             showSetDelete={showSetDelete}

@@ -92,6 +92,20 @@ export type ChatContextSnapshotBlock = {
   isActive?: boolean;
 };
 
+/**
+ * Debug / telemetry payload when a chat line is applied without WebLLM (local parser).
+ * Safe to store on transcripts; older clients ignore unknown JSON fields.
+ */
+export type WorkoutChatLocalParse = {
+  skippedLlm: true;
+  kind: "regex" | "suggest";
+  /** Deterministic `ruleId` from intent-rules when matched. */
+  matchedPattern?: string;
+  usedSuggestions?: boolean;
+  /** Reserved for future structured primitive dumps. */
+  primitives?: unknown;
+};
+
 /** Snapshot of workout state passed into on-device LLM prompts. */
 export type ChatContextSnapshot = {
   exerciseSlug?: string;
@@ -196,4 +210,6 @@ export type ChatSetSuggestion = {
     exerciseSlug: string;
     mode: "instructions" | "description";
   } | null;
+  /** Present when this suggestion was produced by the local deterministic parser (no WebLLM). */
+  localParse?: WorkoutChatLocalParse;
 };

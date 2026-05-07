@@ -53,7 +53,7 @@ export default function ExercisesLibraryPage() {
 
   return (
     <div className="flex flex-col bg-background pb-14 pt-4">
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 sm:px-6">
+      <div className="flex w-full flex-col gap-5">
         <div>
           <p className="text-xs text-muted-foreground">
             Browse the full catalog sourced from Strength Level. Tap an exercise

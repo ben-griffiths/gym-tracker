@@ -3,12 +3,11 @@ import { rankExercisesForQuery } from "@/lib/exercises";
 import type { ChatContextSnapshot, ChatSetSuggestion } from "@/lib/types/workout";
 import { emptyChatSuggestion } from "@/lib/workout-chat/empty-suggestion";
 import {
-  applyWorkoutEditXml,
-  sanitizeEditXml,
-} from "@/lib/workout-chat/workout-edit-xml";
+  chatSuggestionFromDeterministicTurn,
+  mergeSanitizedEditIntoWorkout,
+} from "@/lib/workout-chat/deterministic-suggestion-apply";
 import {
   tryDeterministicChatTurn,
-  type DeterministicTurnResult,
 } from "@/lib/workout-chat/intent-rules";
 import { decomposeUserMessage } from "@/lib/workout-chat/decomposer";
 import {
@@ -24,71 +23,11 @@ import {
   isGreetingOrChatOnly,
   pickLikelyExerciseSlug,
   previousWorkoutXmlHasSets,
-  sanitizeWorkoutXml,
   workoutXmlToSuggestion,
 } from "@/lib/workout-chat/workout-xml";
 import { logChatTurnTelemetry } from "@/lib/workout-chat/turn-telemetry";
 
 export type WorkoutChatSource = "webllm" | "deterministic" | "fallback";
-
-function applyEditXml(params: {
-  previousXml: string;
-  editXml: string;
-  allowedExerciseSlugs: string[];
-  currentExerciseSlug: string;
-}): string | null {
-  const sanitized = sanitizeEditXml(params.editXml, {
-    allowedExerciseSlugs: params.allowedExerciseSlugs,
-  });
-  if (!sanitized) return null;
-  const merged = applyWorkoutEditXml({
-    previousXml: params.previousXml,
-    editXml: sanitized,
-    allowedExerciseSlugs: params.allowedExerciseSlugs,
-  });
-  if (!merged) return null;
-  const sanitizedMerged = sanitizeWorkoutXml(merged, {
-    allowedExerciseSlugs: params.allowedExerciseSlugs,
-    previousXml: params.previousXml,
-    preferredExerciseSlug: params.currentExerciseSlug || undefined,
-  });
-  if (!sanitizedMerged || !/<s\b/i.test(sanitizedMerged)) return null;
-  return sanitizedMerged;
-}
-
-function applyDeterministicResult(params: {
-  result: DeterministicTurnResult;
-  message: string;
-  previousXml: string;
-  allowedExerciseSlugs: string[];
-  currentExerciseSlug: string;
-  ranks: ReturnType<typeof rankExercisesForQuery>;
-  defaultUnit: "kg" | "lb";
-}): ChatSetSuggestion | null {
-  if (params.result.kind === "workout") {
-    return workoutXmlToSuggestion({
-      rawModelOutput: params.result.workoutXml,
-      userMessage: params.message,
-      ranks: params.ranks,
-      defaultUnit: params.defaultUnit,
-      fullRepair: true,
-    });
-  }
-  const sanitized = applyEditXml({
-    previousXml: params.previousXml,
-    editXml: params.result.editXml,
-    allowedExerciseSlugs: params.allowedExerciseSlugs,
-    currentExerciseSlug: params.currentExerciseSlug,
-  });
-  if (!sanitized) return null;
-  return workoutXmlToSuggestion({
-    rawModelOutput: sanitized,
-    userMessage: params.message,
-    ranks: params.ranks,
-    defaultUnit: params.defaultUnit,
-    fullRepair: true,
-  });
-}
 
 function applyPrimitives(params: {
   primitives: Primitive[];
@@ -110,7 +49,7 @@ function applyPrimitives(params: {
     cursorXml = built.workoutXml;
   }
   if (built.editXml) {
-    const merged = applyEditXml({
+    const merged = mergeSanitizedEditIntoWorkout({
       previousXml: cursorXml,
       editXml: built.editXml,
       allowedExerciseSlugs: params.allowedExerciseSlugs,
@@ -134,10 +73,15 @@ function applyPrimitives(params: {
 
 export async function runXmlWorkoutChat(
   engine: MLCEngineInterface,
-  input: { message: string; context: ChatContextSnapshot | undefined },
+  input: {
+    message: string;
+    context: ChatContextSnapshot | undefined;
+    /** Fallback unit when XML / rules omit `u=`; should match user display preference. */
+    defaultWeightUnit?: "kg" | "lb";
+  },
 ): Promise<{ suggestion: ChatSetSuggestion; source: WorkoutChatSource }> {
   const { message, context } = input;
-  const defaultUnit = "kg" as const;
+  const defaultUnit = input.defaultWeightUnit ?? "kg";
 
   logChatTurnTelemetry("input", {
     messagePreview: message.slice(0, 120),
@@ -168,11 +112,10 @@ export async function runXmlWorkoutChat(
 
   const query = extractExerciseQueryFromMessage(message);
   const ranks = rankExercisesForQuery(query, 5);
-  const rankedSlugs = ranks.map((r) => r.exercise.slug).filter(Boolean);
 
   const exerciseSlugHints = buildOrderedExerciseSlugHints(
     likelyExerciseSlug,
-    rankedSlugs,
+    ranks,
     hasExistingSets,
     message,
   );
@@ -187,7 +130,7 @@ export async function runXmlWorkoutChat(
     defaultUnit,
   });
   if (det) {
-    const suggestion = applyDeterministicResult({
+    const suggestion = chatSuggestionFromDeterministicTurn({
       result: det,
       message,
       previousXml,
@@ -306,7 +249,11 @@ export async function runXmlWorkoutChat(
  */
 export async function runWorkoutChatDraft(
   engine: MLCEngineInterface,
-  input: { message: string; context: ChatContextSnapshot | undefined },
+  input: {
+    message: string;
+    context: ChatContextSnapshot | undefined;
+    defaultWeightUnit?: "kg" | "lb";
+  },
 ): Promise<{
   suggestion: ChatSetSuggestion;
   source: WorkoutChatSource;

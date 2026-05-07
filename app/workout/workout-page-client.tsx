@@ -46,6 +46,8 @@ import {
 } from "@/components/workout/exercise-block-card";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useWebllm } from "@/components/webllm/webllm-provider";
+import { useUserStrengthSex } from "@/components/profile/user-strength-sex-provider";
+import { useUserWeightUnit } from "@/components/profile/user-weight-unit-provider";
 import { webllmLogError } from "@/lib/webllm/client-log";
 import {
   createManySets,
@@ -58,6 +60,7 @@ import {
   updateSet,
 } from "@/lib/api";
 import { updateSetSchema } from "@/lib/validators/workout";
+import { displayNumberToKg, kgToDisplayNumber, suffixForUnit } from "@/lib/weight-units";
 import { EXERCISES, getExerciseByName, getExerciseBySlug } from "@/lib/exercises";
 import { planChatTurn } from "@/lib/workout-chat/chat-flow";
 import {
@@ -66,6 +69,7 @@ import {
   type WorkoutChatSuggestOutput,
   workoutChatSuggest,
 } from "@/lib/workout-chat/suggest";
+import { buildEstimatedOneRmKgBySlug } from "@/lib/workout-chat/estimated-one-rm";
 import { toKg } from "@/lib/lift-profiles";
 import {
   estimateOneRm,
@@ -107,9 +111,11 @@ import {
   type SnapshotExerciseBlock,
   type WorkoutStateSnapshot,
 } from "@/lib/workout-snapshot";
+import { tryWorkoutChatLocalFastPath } from "@/lib/workout-chat/local-fast-chat";
 import type {
   BlockOperation,
   ChatContextSnapshot,
+  ChatSetSuggestion,
   EffortFeel,
   ExerciseRecord,
   ExerciseWeightCandidate,
@@ -313,6 +319,12 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     null,
   );
   const composerGhostSuppressRef = useRef(false);
+  /** True when the composer draft was built with suggestion chips only (no manual typing). */
+  const composerChipOnlyDraftRef = useRef(false);
+  const composerActivityInitializedRef = useRef(false);
+
+  const { strengthSex } = useUserStrengthSex();
+  const { weightUnit: preferredWeightUnit } = useUserWeightUnit();
 
   const scrollRootRef = useAppScrollRootRef();
 
@@ -589,7 +601,12 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     mutationFn: async (input: {
       message: string;
       context?: ChatContextSnapshot;
+      /** From {@link tryWorkoutChatLocalFastPath}; skips loading WebLLM. */
+      precomputed?: ChatSetSuggestion | null;
+      defaultWeightUnit?: WeightUnit;
     }) => {
+      if (input.precomputed) return input.precomputed;
+
       const engine =
         (await webllm.ensureEngineForChat()) ?? webllm.getEngine();
       if (!engine) {
@@ -603,6 +620,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
       const { suggestion } = await runWorkoutChatDraft(engine, {
         message: input.message,
         context: input.context,
+        defaultWeightUnit: input.defaultWeightUnit ?? "kg",
       });
       return suggestion;
     },
@@ -613,9 +631,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
   const historyQuery = useHistoryGroups();
 
   /** Direct Dexie row for this URL — survives `GROUP_LIMIT` trimming in history lists. */
-  const workoutResumePayload = useWorkoutResumePayload(
-    typeof historyQuery.syncedUserId === "string" ? resumeSessionId : null,
-  );
+  const workoutResumePayload = useWorkoutResumePayload(resumeSessionId);
 
   const sessionFromHistory = useMemo((): HistorySession | null => {
     if (!sessionId) return null;
@@ -954,20 +970,34 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
       ? activeBlock.sets[activeBlock.sets.length - 1]
       : null;
   const lastSet = activeBlockLastSet ?? allSets[allSets.length - 1] ?? null;
-  const lastWeightUnit: "kg" | "lb" = lastSet?.weightUnit ?? "kg";
 
   const sessionStats = useMemo(() => {
-    const totalVolume = allSets.reduce((sum, set) => {
+    const totalVolumeKg = allSets.reduce((sum, set) => {
       const reps = set.reps ?? 0;
       const weight = set.weight ?? 0;
-      return sum + reps * weight;
+      return sum + reps * toKg(weight, set.weightUnit);
     }, 0);
     return {
       count: allSets.length,
-      volume: Math.round(totalVolume),
-      unit: lastWeightUnit,
+      volume: Math.round(totalVolumeKg),
+      unit: preferredWeightUnit,
     };
-  }, [allSets, lastWeightUnit]);
+  }, [allSets, preferredWeightUnit]);
+
+  const historySessionsForOneRmSuggest = useMemo(
+    () => (historyQuery.data?.groups ?? []).flatMap((g) => g.sessions),
+    [historyQuery.data],
+  );
+
+  const estimatedOneRmKgBySlugForSuggest = useMemo(
+    () =>
+      buildEstimatedOneRmKgBySlug(
+        historySessionsForOneRmSuggest,
+        Object.values(blocks),
+        strengthSex,
+      ),
+    [historySessionsForOneRmSuggest, blocks, strengthSex],
+  );
 
   const recentExerciseNamesForSuggest = useMemo(() => {
     const names: string[] = [];
@@ -1021,8 +1051,10 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
 
   const currentExerciseLoadSnippetsForComposer = useMemo(() => {
     if (!activeBlock || activeBlock.deleted) return [];
-    return formatSetsLoadSnippetsFromBlockSets(activeBlock.sets);
-  }, [activeBlock]);
+    return formatSetsLoadSnippetsFromBlockSets(activeBlock.sets, {
+      displayUnit: preferredWeightUnit,
+    });
+  }, [activeBlock, preferredWeightUnit]);
 
   const refreshComposerGhost = useCallback(() => {
     if (composerGhostDebounceRef.current) {
@@ -1037,7 +1069,9 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
         recentExerciseNames: recentExerciseNamesForSuggest,
         catalogExercises: WORKOUT_CHAT_COMPOSER_CATALOG,
         currentExerciseSlug: activeExercise?.slug ?? null,
-        unitHint: lastWeightUnit,
+        unitHint: preferredWeightUnit,
+        weightUnit: preferredWeightUnit,
+        estimatedOneRmKgBySlug: estimatedOneRmKgBySlugForSuggest,
         recentLoadSnippets: recentLoadSnippetsForComposer,
         currentExerciseLoadSnippets: currentExerciseLoadSnippetsForComposer,
         recentUserTexts: recentUserTextsForSnippets,
@@ -1051,7 +1085,8 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     currentExerciseLoadSnippetsForComposer,
     recentUserTextsForSnippets,
     activeExercise?.slug,
-    lastWeightUnit,
+    preferredWeightUnit,
+    estimatedOneRmKgBySlugForSuggest,
   ]);
 
   function appendMessage(message: Message) {
@@ -2394,16 +2429,33 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
 
     const userMessageId = makeId("msg");
     registerSnapshotBeforeUserMessage(userMessageId);
+
+    const chatCtx = buildChatContext();
+    const usedSuggestions = composerChipOnlyDraftRef.current;
+    const precomputed = tryWorkoutChatLocalFastPath({
+      message,
+      context: chatCtx,
+      usedSuggestions,
+      defaultWeightUnit: preferredWeightUnit,
+    });
+
     appendMessage({
       id: userMessageId,
       kind: "text",
       role: "user",
       text: message,
+      ...(precomputed?.localParse
+        ? { localParse: precomputed.localParse }
+        : {}),
     });
 
-    const chatCtx = buildChatContext();
     const suggestion = await chatMutation
-      .mutateAsync({ message, context: chatCtx })
+      .mutateAsync({
+        message,
+        context: chatCtx,
+        precomputed,
+        defaultWeightUnit: preferredWeightUnit,
+      })
       .catch((err) => {
         webllmLogError("workout chat: mutateAsync failed", err, {
           messagePreview: message.slice(0, 120),
@@ -2930,29 +2982,31 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
       const activeId = activeBlockIdRef.current;
       if (!activeId) return;
       const last = readActiveLastSet();
-      const baseWeight = last?.weight;
-      if (baseWeight === null || baseWeight === undefined) return;
-      const unit = last?.weightUnit ?? lastWeightUnit;
+      if (last?.weight === null || last?.weight === undefined) return;
+      const u = preferredWeightUnit;
+      const baseWeight = kgToDisplayNumber(toKg(last.weight, last.weightUnit), u);
+      if (!Number.isFinite(baseWeight) || baseWeight <= 0) return;
       const block = blocksRef.current[activeId];
       const oneRmKg = getEstimatedOneRmKgForSlug(block?.exercise.slug);
       const oneRmInUnit =
         oneRmKg != null && oneRmKg > 0
-          ? oneRmKgToDisplayUnit(oneRmKg, unit)
+          ? oneRmKgToDisplayUnit(oneRmKg, u)
           : null;
       const fullInc =
         oneRmInUnit != null
-          ? weightLoadIncrement(oneRmInUnit, unit)
-          : weightLoadIncrement(0, unit);
+          ? weightLoadIncrement(oneRmInUnit, u)
+          : weightLoadIncrement(0, u);
       const inc =
         direction === 1
-          ? quickAddIncrement(oneRmInUnit, baseWeight, unit, fullInc)
+          ? quickAddIncrement(oneRmInUnit, baseWeight, u, fullInc)
           : fullInc;
       const raw = baseWeight + direction * inc;
       const nextWeight = Math.max(0, Math.round(raw * 4) / 4);
+      const nextKg = displayNumberToKg(nextWeight, u);
       await addSetToBlock(activeId, {
         reps: last?.reps ?? null,
-        weight: nextWeight,
-        weightUnit: unit,
+        weight: nextKg,
+        weightUnit: "kg",
         source: "manual",
       });
     });
@@ -2962,11 +3016,12 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     await runChipAction(async () => {
       const activeId = activeBlockIdRef.current;
       if (!activeId) return;
-      const last = readActiveLastSet();
+      const u = preferredWeightUnit;
+      const nextKg = displayNumberToKg(weight, u);
       await addSetToBlock(activeId, {
         reps,
-        weight,
-        weightUnit: last?.weightUnit ?? lastWeightUnit,
+        weight: nextKg,
+        weightUnit: "kg",
         source: "manual",
       });
     });
@@ -3047,7 +3102,11 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
       lastSet?.weight !== null &&
       lastSet.weight > 0
     ) {
-      const u = lastWeightUnit;
+      const u = preferredWeightUnit;
+      const lastDisplay = kgToDisplayNumber(
+        toKg(lastSet.weight, lastSet.weightUnit),
+        u,
+      );
       const oneRmInUnit =
         activeExerciseOneRmKg != null && activeExerciseOneRmKg > 0
           ? oneRmKgToDisplayUnit(activeExerciseOneRmKg, u)
@@ -3058,7 +3117,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
           : weightLoadIncrement(0, u);
       const incUp = quickAddIncrement(
         oneRmInUnit,
-        lastSet.weight,
+        lastDisplay,
         u,
         fullInc,
       );
@@ -3080,7 +3139,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
 
     return chips;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeExercise, lastSet, lastWeightUnit, activeExerciseOneRmKg]);
+  }, [activeExercise, lastSet, preferredWeightUnit, activeExerciseOneRmKg]);
 
   // Combined (reps × weight) suggestions calibrated to ~8/10 effort
   // (RPE 8, roughly 2 reps in reserve). For a target of N reps at RPE 8
@@ -3090,14 +3149,15 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
     if (!activeExercise || activeExerciseOneRmKg === null) return [];
 
     const chips: Array<{ label: string; onClick: () => void; disabled?: boolean }> = [];
+    const u = preferredWeightUnit;
     const oneRmInUnit = oneRmKgToDisplayUnit(
       activeExerciseOneRmKg,
-      lastWeightUnit,
+      u,
     );
-    const fullInc = weightLoadIncrement(oneRmInUnit, lastWeightUnit);
+    const fullInc = weightLoadIncrement(oneRmInUnit, u);
     const increment = rpeChipsRoundIncrement(
       oneRmInUnit,
-      lastWeightUnit,
+      u,
       fullInc,
     );
     const repsInReserveForRpe8 = 2;
@@ -3106,14 +3166,14 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
       const rounded = Math.round((oneRmInUnit * pct) / increment) * increment;
       if (rounded <= 0) continue;
       chips.push({
-        label: `${targetReps} × ${rounded}${lastWeightUnit}`,
+        label: `${targetReps} × ${rounded}${u}`,
         onClick: () => handleSetRepsAndWeight(targetReps, rounded),
       });
     }
 
     return chips;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeExercise, lastWeightUnit, activeExerciseOneRmKg]);
+  }, [activeExercise, preferredWeightUnit, activeExerciseOneRmKg]);
 
   const hasAnyChip = basicChips.length > 0 || rpeChips.length > 0;
 
@@ -3333,6 +3393,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
                     <ExerciseBlockCard
                       exercise={block.exercise}
                       sets={block.sets}
+                      displayWeightUnit={preferredWeightUnit}
                       collapsed
                       sticky={useSticky}
                       onToggle={() => toggleBlockCollapsed(block.id)}
@@ -3348,6 +3409,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
                     <ExerciseBlockCard
                       exercise={block.exercise}
                       sets={block.sets}
+                      displayWeightUnit={preferredWeightUnit}
                       collapsed
                       deleted
                       onRestore={() => restoreBlock(block.id)}
@@ -3368,6 +3430,7 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
                   <ExerciseBlockCard
                     exercise={block.exercise}
                     sets={block.sets}
+                    displayWeightUnit={preferredWeightUnit}
                     active={block.id === activeBlockId}
                     onToggle={() => toggleBlockCollapsed(block.id)}
                     onDeleteSet={(setId) => removeSetFromBlock(block.id, setId)}
@@ -3693,8 +3756,21 @@ function WorkoutPageContent({ routeSegment }: { routeSegment: string }) {
             cameraTrigger={cameraTrigger}
             disabled={revertBusy || webllm.chatSendBlocked}
             isLoading={cameraBusy || chatMutation.isPending || revertBusy}
+            placeholder={`Log a set, e.g. bench 5x5 at 100 ${suffixForUnit(preferredWeightUnit)}`}
             text={composerText}
-            onComposerActivity={({ text, caret }) => {
+            onComposerActivity={({ text, caret, source }) => {
+              if (text === "" && caret === 0) {
+                composerActivityInitializedRef.current = false;
+                composerChipOnlyDraftRef.current = false;
+              } else if (source === "typing") {
+                composerActivityInitializedRef.current = true;
+                composerChipOnlyDraftRef.current = false;
+              } else if (source === "suggestion") {
+                if (!composerActivityInitializedRef.current) {
+                  composerChipOnlyDraftRef.current = true;
+                  composerActivityInitializedRef.current = true;
+                }
+              }
               composerGhostSuppressRef.current = false;
               composerTextRef.current = text;
               composerCaretRef.current = caret;

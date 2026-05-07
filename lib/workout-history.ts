@@ -1,4 +1,11 @@
 import { getExerciseByName } from "@/lib/exercises";
+import {
+  formatWeightKgForDisplay,
+  kgToDisplayNumber,
+  suffixForUnit,
+  toKg,
+  type WeightUnitPreference,
+} from "@/lib/weight-units";
 
 export type HistorySet = {
   id: string;
@@ -109,6 +116,7 @@ export function flattenSets(session: HistorySession): FlattenedSet[] {
 
 export function groupByExercise(
   sets: FlattenedSet[],
+  options?: { displayMassUnit?: WeightUnitPreference },
 ): ExerciseGroupSummary[] {
   const order: string[] = [];
   const byName = new Map<string, FlattenedSet[]>();
@@ -125,7 +133,9 @@ export function groupByExercise(
     return {
       exerciseName: name,
       sets: group,
-      summary: summarizeSets(group),
+      summary: options?.displayMassUnit
+        ? summarizeSetsForDisplayPreference(group, options.displayMassUnit)
+        : summarizeSets(group),
     };
   });
 }
@@ -261,6 +271,103 @@ export function summarizeSets(sets: HistorySet[]): string {
       const weight =
         set.weight === null || set.weight === undefined ? "-" : set.weight;
       return `${reps}×${weight}${set.weightUnit ?? unit}`;
+    })
+    .join(", ");
+}
+
+function setMassKg(set: HistorySet): number | null {
+  if (set.weight === null || set.weight === undefined) return null;
+  const w = Number(set.weight);
+  if (!Number.isFinite(w) || w <= 0) return null;
+  return toKg(w, set.weightUnit ?? "kg");
+}
+
+/** Sum of reps × mass in the user’s preferred display unit (each set normalized via canonical kg first). */
+export function computeVolumeForDisplayPreference(
+  sets: HistorySet[],
+  displayMassUnit: WeightUnitPreference,
+): { volume: number; unitSuffix: string } {
+  let total = 0;
+  for (const set of sets) {
+    const kgMass = setMassKg(set);
+    if (kgMass === null) continue;
+    const reps = set.reps ?? 0;
+    total += reps * kgToDisplayNumber(kgMass, displayMassUnit);
+  }
+  return {
+    volume: Math.round(total),
+    unitSuffix: suffixForUnit(displayMassUnit),
+  };
+}
+
+/** Like {@link summarizeSets}: compact exercise lines, masses converted for {@link displayMassUnit}. */
+export function summarizeSetsForDisplayPreference(
+  sets: HistorySet[],
+  displayMassUnit: WeightUnitPreference,
+): string {
+  if (sets.length === 0) return "";
+
+  const su = suffixForUnit(displayMassUnit);
+
+  function displayNumForSet(set: HistorySet): number | null {
+    const kg = setMassKg(set);
+    return kg === null ? null : kgToDisplayNumber(kg, displayMassUnit);
+  }
+
+  const repsValues = sets.map((set) => set.reps);
+  const weightDisplayNums = sets.map(displayNumForSet);
+
+  const allRepsEqual = repsValues.every((value) => value === repsValues[0]);
+  const allWeightEqual = weightDisplayNums.every((value) =>
+    Object.is(value, weightDisplayNums[0]),
+  );
+
+  if (allRepsEqual && allWeightEqual) {
+    const reps = repsValues[0];
+    const firstKg = setMassKg(sets[0]!);
+    if (
+      reps !== undefined &&
+      reps !== null &&
+      firstKg !== null &&
+      firstKg > 0
+    ) {
+      return `${sets.length} × ${reps} × ${formatWeightKgForDisplay(firstKg, displayMassUnit)}${su}`;
+    }
+    if (reps !== null && reps !== undefined) {
+      return `${sets.length} × ${reps} reps`;
+    }
+    if (firstKg !== null && firstKg > 0) {
+      return `${sets.length} × ${formatWeightKgForDisplay(firstKg, displayMassUnit)}${su}`;
+    }
+    return `${sets.length} sets`;
+  }
+
+  if (sets.length > RANGE_THRESHOLD) {
+    const repsRange = formatRangeLabel(formatRange(repsValues), " reps");
+    const finiteKgMasses = sets
+      .map(setMassKg)
+      .filter((x): x is number => x !== null && x > 0);
+    const kgRange = formatRange(finiteKgMasses);
+    let weightRange: string | null = null;
+    if (kgRange) {
+      const a = formatWeightKgForDisplay(kgRange.min, displayMassUnit);
+      const b = formatWeightKgForDisplay(kgRange.max, displayMassUnit);
+      weightRange =
+        kgRange.min === kgRange.max ? `${a}${su}` : `${a}–${b}${su}`;
+    }
+    const parts = [`${sets.length} sets`];
+    if (repsRange) parts.push(repsRange);
+    if (weightRange) parts.push(weightRange);
+    return parts.join(" · ");
+  }
+
+  return sets
+    .map((set) => {
+      const reps = set.reps ?? "-";
+      const kg = setMassKg(set);
+      const wPart =
+        kg !== null ? `${formatWeightKgForDisplay(kg, displayMassUnit)}${su}` : "-";
+      return `${reps}×${wPart}`;
     })
     .join(", ");
 }

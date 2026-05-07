@@ -100,7 +100,7 @@ type WebllmContextValue = {
   storagePersistenceHint: string | null;
   /**
    * When true during `loading`, the install UI uses a full-screen overlay (network shard download).
-   * When false, a slim header progress strip is used (cache read, GPU shaders, early boot).
+   * When false, install runs with no header progress chrome (cache read, GPU shaders, early boot).
    */
   blockingInstallUi: boolean;
 };

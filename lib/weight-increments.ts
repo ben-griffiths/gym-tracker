@@ -1,6 +1,7 @@
 import { percentageOfOneRm } from "./rep-percentages";
+import { KG_PER_LB, oneRmKgToDisplayUnit } from "./weight-units";
 
-const KG_PER_LB = 0.45359237;
+export { oneRmKgToDisplayUnit };
 
 /** RPE-8 rep × weight row targets in the workout UI. */
 const RPE_SUGGEST_REPS: readonly number[] = [1, 3, 5, 8, 10];
@@ -157,15 +158,4 @@ export function formatLoadIncrement(inc: number): string {
   if (Number.isInteger(inc)) return String(inc);
   if (Number.isInteger(inc * 2)) return (Math.round(inc * 2) / 2).toString();
   return String(inc);
-}
-
-/** Convert kg 1RM to the session's display unit (kg or lb). */
-export function oneRmKgToDisplayUnit(
-  oneRmKg: number,
-  displayUnit: "kg" | "lb",
-): number {
-  if (!Number.isFinite(oneRmKg) || oneRmKg <= 0) {
-    return displayUnit === "kg" ? 0 : 0;
-  }
-  return displayUnit === "lb" ? oneRmKg / KG_PER_LB : oneRmKg;
 }

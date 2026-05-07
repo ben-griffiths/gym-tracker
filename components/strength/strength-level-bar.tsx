@@ -1,5 +1,6 @@
 "use client";
 
+import { STRENGTH_LEVEL_BAR_GRADIENT_CLASS } from "@/lib/strength-level-bar-gradient";
 import { cn } from "@/lib/utils";
 
 /** Ticks at 20/40/60/80% of the bar. Bar hue is green (0) → orange (50) → red (100). */
@@ -29,7 +30,10 @@ export function StrengthLevelBar({
       >
         {/* 0% = green, 50% = orange, 100% = red along the full bar; cover clips from the right. */}
         <div
-          className="absolute inset-y-0 left-0 w-full bg-gradient-to-r from-green-500 from-[0%] via-orange-500 via-[50%] to-red-500 to-[100%] dark:from-lime-400 dark:via-amber-400 dark:to-rose-500"
+          className={cn(
+            "absolute inset-y-0 left-0 w-full",
+            STRENGTH_LEVEL_BAR_GRADIENT_CLASS,
+          )}
           aria-hidden
         />
         <div

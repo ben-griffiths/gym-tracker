@@ -129,18 +129,81 @@ export function mightChangeExercise(message: string): boolean {
   );
 }
 
+/** True when the message's leading lift phrase ranks a different exercise strongly. */
+function namedLiftInMessageProbablyDiffersFromCurrent(
+  message: string,
+  currentExerciseSlug: string,
+  ranks: ExerciseRank[],
+): boolean {
+  if (ranks.length === 0 || !currentExerciseSlug.trim()) return false;
+  const top = ranks[0]!;
+  if (top.exercise.slug === currentExerciseSlug) return false;
+
+  const q = extractExerciseQueryFromMessage(message).trim();
+  if (q.length < 3 || !/^[a-zA-Z]/.test(q)) return false;
+
+  const firstTok = q.split(/\s+/)[0]!.toLowerCase();
+  const stop = new Set([
+    "a",
+    "an",
+    "the",
+    "add",
+    "put",
+    "insert",
+    "remove",
+    "delete",
+    "make",
+    "set",
+    "change",
+    "do",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "another",
+    "more",
+    "warmup",
+    "warm",
+    "up",
+    "just",
+    "only",
+    "last",
+    "first",
+    "second",
+    "third",
+  ]);
+  if (stop.has(firstTok)) return false;
+
+  const second = ranks[1]?.score ?? 0;
+  const margin = top.score - second;
+  if (top.score >= 800 && margin >= 40) return true;
+  if (second > 0 && top.score >= 1.25 * second && margin >= 30) return true;
+  return false;
+}
+
 /**
- * Allowed slug ordering: current XML exercise first; rank-based slugs only when
- * the log is empty or the message may introduce/switch exercise.
+ * Allowed slug ordering: current XML exercise first; rank-based slugs when the
+ * log is empty, the user may switch exercise, or the message likely names a
+ * different lift than the active block.
  */
 export function buildOrderedExerciseSlugHints(
   currentExerciseSlug: string,
-  rankedSlugs: string[],
+  ranks: ExerciseRank[],
   hasExistingSets: boolean,
   message: string,
 ): string[] {
+  const rankedSlugs = ranks.map((r) => r.exercise.slug).filter(Boolean);
   const ranked =
-    !hasExistingSets || mightChangeExercise(message) ? rankedSlugs : [];
+    !hasExistingSets ||
+    mightChangeExercise(message) ||
+    namedLiftInMessageProbablyDiffersFromCurrent(
+      message,
+      currentExerciseSlug,
+      ranks,
+    )
+      ? rankedSlugs
+      : [];
   return uniqueTruthy([currentExerciseSlug, ...ranked]).slice(0, 8);
 }
 
@@ -600,26 +663,13 @@ export function previousWorkoutXmlHasSets(xml: string): boolean {
   return /<s\b/i.test(m[1] ?? "");
 }
 
-/** Trivial `bench 5x5 100kg` or `bench 5×5` (weight optional) → XML (no WebLLM). */
-export function tryDeterministicWorkoutXml(
-  message: string,
-  defaultUnit: WeightUnit = "kg",
-): string | null {
-  const t = message.trim();
-  const m = t.match(
-    /^(.+?)\s+(\d+)\s*[x×]\s*(\d+)(?:\s+(\d+(?:\.\d+)?)\s*(kg|lb)?)?\s*$/iu,
-  );
-  if (!m) return null;
-  const sets = Number(m[2]!);
-  const reps = Number(m[3]!);
-  const weightRaw = m[4];
-  const weight =
-    weightRaw !== undefined && weightRaw !== "" ? Number(weightRaw) : null;
-  const u = (m[5]?.toLowerCase() as WeightUnit | undefined) ?? defaultUnit;
-  if (!Number.isInteger(sets) || sets < 1 || sets > MAX_WORKOUT_SET_ROWS) return null;
-  if (!Number.isInteger(reps) || reps < 1 || reps > 100) return null;
-  if (weight != null && (!Number.isFinite(weight) || weight < 0)) return null;
-
+function buildDeterministicLogNewXml(params: {
+  sets: number;
+  reps: number;
+  weight: number | null;
+  u: WeightUnit;
+}): string {
+  const { sets, reps, weight, u } = params;
   const lines: string[] = [`<workout exercise="">`];
   for (let i = 0; i < sets; i += 1) {
     const wAttr =
@@ -628,6 +678,90 @@ export function tryDeterministicWorkoutXml(
   }
   lines.push(`</workout>`);
   return lines.join("\n");
+}
+
+/** Trivial `bench 5x5 100kg` or `bench 5×5` (weight optional) → XML (no WebLLM). */
+export function tryDeterministicWorkoutXml(
+  message: string,
+  defaultUnit: WeightUnit = "kg",
+): string | null {
+  const t = message.trim();
+  let m = t.match(
+    /^(.+?)\s+(\d+)\s*[x×]\s*(\d+)\s+@\s*(\d+(?:\.\d+)?)\s*(kg|lb|kgs|lbs)?\s*$/iu,
+  );
+  if (m) {
+    const sets = Number(m[2]!);
+    const reps = Number(m[3]!);
+    const weight = Number(m[4]!);
+    const u =
+      (parseUnitToken(m[5]) as WeightUnit | undefined) ?? defaultUnit;
+    if (!Number.isInteger(sets) || sets < 1 || sets > MAX_WORKOUT_SET_ROWS)
+      return null;
+    if (!Number.isInteger(reps) || reps < 1 || reps > 100) return null;
+    if (!Number.isFinite(weight) || weight <= 0) return null;
+    return buildDeterministicLogNewXml({ sets, reps, weight, u });
+  }
+
+  m = t.match(
+    /^(.+?)\s+(\d+)\s*[x×]\s*(\d+)(?:\s+(\d+(?:\.\d+)?)\s*(kg|lb)?)?\s*$/iu,
+  );
+  if (m) {
+    const sets = Number(m[2]!);
+    const reps = Number(m[3]!);
+    const weightRaw = m[4];
+    const weight =
+      weightRaw !== undefined && weightRaw !== "" ? Number(weightRaw) : null;
+    const u = (m[5]?.toLowerCase() as WeightUnit | undefined) ?? defaultUnit;
+    if (!Number.isInteger(sets) || sets < 1 || sets > MAX_WORKOUT_SET_ROWS)
+      return null;
+    if (!Number.isInteger(reps) || reps < 1 || reps > 100) return null;
+    if (weight != null && (!Number.isFinite(weight) || weight < 0)) return null;
+    return buildDeterministicLogNewXml({ sets, reps, weight, u });
+  }
+
+  // "bench 5 reps 3 sets @ 72.5kg" / "bench 5 reps 3 sets 72.5 kg"
+  let mw = t.match(
+    /^(.+?)\s+(\d+)\s*reps?\s+(\d+)\s*sets?\s+(?:@\s*)?(\d+(?:\.\d+)?)\s*(kg|lb|kgs|lbs)?\s*$/iu,
+  );
+  if (mw) {
+    const reps = Number(mw[2]!);
+    const sets = Number(mw[3]!);
+    const weight = Number(mw[4]!);
+    const u =
+      (parseUnitToken(mw[5]) as WeightUnit | undefined) ?? defaultUnit;
+    if (!Number.isInteger(sets) || sets < 1 || sets > MAX_WORKOUT_SET_ROWS)
+      return null;
+    if (!Number.isInteger(reps) || reps < 1 || reps > 100) return null;
+    if (!Number.isFinite(weight) || weight <= 0) return null;
+    return buildDeterministicLogNewXml({ sets, reps, weight, u });
+  }
+
+  // "bench 3 sets 5 reps @ 72.5kg"
+  mw = t.match(
+    /^(.+?)\s+(\d+)\s*sets?\s+(\d+)\s*reps?\s+(?:@\s*)?(\d+(?:\.\d+)?)\s*(kg|lb|kgs|lbs)?\s*$/iu,
+  );
+  if (mw) {
+    const sets = Number(mw[2]!);
+    const reps = Number(mw[3]!);
+    const weight = Number(mw[4]!);
+    const u =
+      (parseUnitToken(mw[5]) as WeightUnit | undefined) ?? defaultUnit;
+    if (!Number.isInteger(sets) || sets < 1 || sets > MAX_WORKOUT_SET_ROWS)
+      return null;
+    if (!Number.isInteger(reps) || reps < 1 || reps > 100) return null;
+    if (!Number.isFinite(weight) || weight <= 0) return null;
+    return buildDeterministicLogNewXml({ sets, reps, weight, u });
+  }
+
+  return null;
+}
+
+function parseUnitToken(token: string | undefined): WeightUnit | undefined {
+  if (!token) return undefined;
+  const x = token.toLowerCase();
+  if (x === "kg" || x === "kgs") return "kg";
+  if (x === "lb" || x === "lbs") return "lb";
+  return undefined;
 }
 
 function repairedRowsToSetDetails(rows: RepairedSetRow[]): SetDetail[] {

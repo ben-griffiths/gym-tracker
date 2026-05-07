@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ExerciseRecord } from "@/lib/exercises";
+import { percentageOfOneRm } from "@/lib/rep-percentages";
 import {
   applyGhostAtCaret,
   applyWorkoutChatSuggestionAtCaret,
+  ensureSpaceBeforeInsertIfNeeded,
   extractLoadSnippetsFromTexts,
   ghostSuffixIgnoreCase,
   lineMatchesCanonicalCatalogExercise,
@@ -106,6 +108,48 @@ describe("workoutChatSuggest", () => {
     ]);
   });
 
+  it("prioritizes eight-rep %1RM chips for … N sets NL tail when estimatedOneRmKgBySlug is set", () => {
+    expect(percentageOfOneRm(8)).toBe(0.81);
+    const r = workoutChatSuggest({
+      value: "Bench Press 5 reps 3 sets",
+      caret: "Bench Press 5 reps 3 sets".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+      recentLoadSnippets: [],
+      currentExerciseLoadSnippets: [],
+      unitHint: "kg",
+      estimatedOneRmKgBySlug: { "bench-press": 100 },
+    });
+    expect(r.phase).toBe("load");
+    expect(r.suggestions.length).toBeGreaterThanOrEqual(3);
+    expect(r.suggestions.every((s) => s.kind === "load")).toBe(true);
+    const main = r.suggestions[0];
+    expect(main?.label.toLowerCase()).toContain("8rm");
+    expect(main?.insertText).toBe(" @ 80kg");
+    expect(
+      Number.parseFloat(main!.insertText.match(/[\d.]+/)![0]!) / 100,
+    ).toBeCloseTo(percentageOfOneRm(8), 1);
+  });
+
+  it("accepts estimatedOneRmKg when resolved slug matches currentExerciseSlug", () => {
+    const r = workoutChatSuggest({
+      value: "squat 5×5",
+      caret: "squat 5×5".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+      recentLoadSnippets: [],
+      currentExerciseLoadSnippets: [],
+      unitHint: "kg",
+      currentExerciseSlug: "squat",
+      estimatedOneRmKg: 100,
+    });
+    expect(r.phase).toBe("load");
+    expect(r.suggestions[0]?.label.toLowerCase()).toContain("8rm");
+    expect(r.suggestions[0]?.insertText).toBe(" @ 80kg");
+  });
+
   it("pads with generic ladders after ranked history loads (≤6 chips)", () => {
     const r = workoutChatSuggest({
       value: "Bench Press 5x5",
@@ -123,6 +167,23 @@ describe("workoutChatSuggest", () => {
     expect(r.suggestions[1]?.insertText).toBe(" @ 72.5kg");
     expect(r.suggestions[2]?.insertText).toBe(" @ 20kg");
     expect(r.suggestions[5]?.insertText).toBe(" @ 80kg");
+  });
+
+  it("lowercase exercise with 5×5 and trailing space yields non-empty load chips", () => {
+    const line = "bench press 5×5 ";
+    const r = workoutChatSuggest({
+      value: line,
+      caret: line.length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+      recentLoadSnippets: [],
+      currentExerciseLoadSnippets: [],
+      unitHint: "kg",
+    });
+    expect(r.phase).toBe("load");
+    expect(r.suggestions.length).toBeGreaterThan(0);
+    expect(r.suggestions.every((s) => s.kind === "load")).toBe(true);
   });
 
   it("fills generic lb ladders when unitHint is lb (empty load history)", () => {
@@ -178,10 +239,24 @@ describe("workoutChatSuggest", () => {
     expect(r.suggestions[0]?.insertText).toBe(" @ 100kg");
   });
 
-  it("proposes load chip after reps keyword tail", () => {
+  it("after `reps` at EOL shows set / × pivot (even when load history exists)", () => {
     const r = workoutChatSuggest({
       value: "squat 10 reps",
       caret: "squat 10 reps".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentLoadSnippets: [" @ 120kg"],
+    });
+    expect(r.phase).toBe("volume");
+    expect(
+      r.suggestions.some((s) => /sets/i.test(s.label) || s.label.includes("×")),
+    ).toBe(true);
+  });
+
+  it("proposes load chip after full sets×reps tail following reps phrase", () => {
+    const r = workoutChatSuggest({
+      value: "squat 10 reps 5x5",
+      caret: "squat 10 reps 5x5".length,
       recentExerciseNames: [],
       catalogExercises: miniCatalog,
       recentLoadSnippets: [" @ 120kg"],
@@ -232,8 +307,65 @@ describe("workoutChatSuggest", () => {
     });
     expect(r.phase).toBe("volume");
     expect(
-      r.suggestions.some((s) => s.label.includes("×") || /^\d+$/.test(s.label)),
+      r.suggestions.some(
+        (s) => s.label.includes("×") || /\breps\b/i.test(s.label),
+      ),
     ).toBe(true);
+  });
+
+  it('after `N reps` at EOL, pivots to set / × volume chips (not another reps strip)', () => {
+    const r = workoutChatSuggest({
+      value: "Bench Press 8 reps",
+      caret: "Bench Press 8 reps".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: ["3x8 @ 40kg"],
+      recentLoadSnippets: [],
+      currentExerciseLoadSnippets: [],
+      unitHint: "kg",
+    });
+    expect(r.phase).toBe("volume");
+    const labels = r.suggestions.map((s) => s.label).join(" ");
+    expect(labels.toLowerCase()).toMatch(/sets|[×]/);
+    expect(r.suggestions.every((s) => /\breps\b/i.test(s.label))).toBe(false);
+  });
+
+  it("digits-only predictive volume chips use descriptive reps labels", () => {
+    const r = workoutChatSuggest({
+      value: "Bench Press ",
+      caret: "Bench Press ".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+      unitHint: "kg",
+    });
+    expect(r.phase).toBe("volume");
+    const repsInsertBacked = r.suggestions.filter((s) => /\breps\b/i.test(s.insertText));
+    expect(repsInsertBacked.length).toBeGreaterThan(0);
+    for (const s of repsInsertBacked) {
+      expect(s.label.toLowerCase()).toContain("reps");
+      expect(s.insertText).toMatch(/^\d+\s+reps\s+$/);
+    }
+  });
+
+  it("snapshots descriptive labels on fallback numeric volume chips when history empty", () => {
+    const r = workoutChatSuggest({
+      value: "bench press ",
+      caret: "bench press ".length,
+      recentExerciseNames: [],
+      catalogExercises: miniCatalog,
+      recentUserTexts: [],
+    });
+    expect(r.suggestions.map((s) => s.label)).toMatchInlineSnapshot(`
+      [
+        "1 reps",
+        "5 reps",
+        "8 reps",
+        "10 reps",
+        "5×5",
+        "3×8",
+      ]
+    `);
   });
 
   it("detects exercise phase while shoulder phrase has no trailing space (synonym chips stay)", () => {
@@ -314,6 +446,21 @@ describe("applyWorkoutChatSuggestionAtCaret", () => {
     expect(nextCaret).toBe("Military Press ".length);
   });
 
+  it("exercise chip replaces line through caret (e.g. dips EOL → Bench press), not concatenated", () => {
+    const line = "dips";
+    const { nextValue, nextCaret } = applyWorkoutChatSuggestionAtCaret(
+      line,
+      line.length,
+      {
+        label: "Bench press",
+        insertText: "Bench press ",
+        kind: "exercise",
+      },
+    );
+    expect(nextValue).toBe("Bench press ");
+    expect(nextCaret).toBe("Bench press ".length);
+  });
+
   it("appends load snippets at caret", () => {
     const v = "bench 5x5";
     const { nextValue, nextCaret } = applyWorkoutChatSuggestionAtCaret(
@@ -323,6 +470,112 @@ describe("applyWorkoutChatSuggestionAtCaret", () => {
     );
     expect(nextValue).toBe("bench 5x5 @ 60kg");
     expect(nextCaret).toBe(nextValue.length);
+  });
+
+  it("appends full reps insert for volume chips (label vs insertText)", () => {
+    const line = "Bench Press ";
+    const { nextValue, nextCaret } = applyWorkoutChatSuggestionAtCaret(
+      line,
+      line.length,
+      { label: "8 reps", insertText: "8 reps ", kind: "volume" },
+    );
+    expect(nextValue).toBe("Bench Press 8 reps ");
+    expect(nextCaret).toBe(nextValue.length);
+  });
+
+  it.each<{
+    name: string;
+    value: string;
+    caret: number;
+    item: Parameters<typeof applyWorkoutChatSuggestionAtCaret>[2];
+    expected: string;
+  }>([
+    {
+      name: "after word at EOL, insert without leading space gets one gap before @",
+      value: "dips",
+      caret: 4,
+      item: { label: "@", insertText: "@ 20kg ", kind: "load" },
+      expected: "dips @ 20kg ",
+    },
+    {
+      name: "after word plus trailing space, same insert — no double space",
+      value: "dips ",
+      caret: 5,
+      item: { label: "@", insertText: "@ 20kg ", kind: "load" },
+      expected: "dips @ 20kg ",
+    },
+    {
+      name: "after dips plus trailing space, volume append — no double space",
+      value: "dips ",
+      caret: 5,
+      item: { label: "8 reps", insertText: "8 reps ", kind: "volume" },
+      expected: "dips 8 reps ",
+    },
+    {
+      name: "mid-line after word, one space before load insert",
+      value: "foo dips",
+      caret: "foo dips".length,
+      item: { label: "@", insertText: "@ 20kg ", kind: "load" },
+      expected: "foo dips @ 20kg ",
+    },
+    {
+      name: "insert already starts with whitespace — no duplicate gap",
+      value: "dips",
+      caret: 4,
+      item: { label: "@", insertText: " @ 20kg", kind: "load" },
+      expected: "dips @ 20kg",
+    },
+    {
+      name: "tab immediately before caret counts as whitespace",
+      value: "dips\t",
+      caret: 5,
+      item: { label: "@", insertText: "@ BW", kind: "load" },
+      expected: "dips\t@ BW",
+    },
+    {
+      name: "caret at buffer start — append load without leading separator",
+      value: "",
+      caret: 0,
+      item: { label: "@", insertText: "@ 20kg", kind: "load" },
+      expected: "@ 20kg",
+    },
+    {
+      name: "resolved exercise without trailing space — one gap before volume insert",
+      value: "Bench Press",
+      caret: "Bench Press".length,
+      item: { label: "8 reps", insertText: "8 reps ", kind: "volume" },
+      expected: "Bench Press 8 reps ",
+    },
+  ])("$name", ({ value, caret, item, expected }) => {
+    const { nextValue, nextCaret } = applyWorkoutChatSuggestionAtCaret(
+      value,
+      caret,
+      item,
+    );
+    expect(nextValue).toBe(expected);
+    expect(nextCaret).toBe(expected.length);
+  });
+});
+
+describe("ensureSpaceBeforeInsertIfNeeded", () => {
+  it("prepends one space when the character before caret is non-whitespace", () => {
+    expect(ensureSpaceBeforeInsertIfNeeded("dips", 4, "@ 20kg ")).toBe(" @ 20kg ");
+  });
+
+  it("does not prepend when there is already whitespace before caret", () => {
+    expect(ensureSpaceBeforeInsertIfNeeded("dips ", 5, "8 reps ")).toBe("8 reps ");
+  });
+
+  it("does not prepend at buffer start (start of first line)", () => {
+    expect(ensureSpaceBeforeInsertIfNeeded("", 0, "@ 20kg")).toBe("@ 20kg");
+  });
+
+  it("does not prepend when insertText already starts with whitespace", () => {
+    expect(ensureSpaceBeforeInsertIfNeeded("dips", 4, " @ 20kg")).toBe(" @ 20kg");
+  });
+
+  it("treats newline before caret as whitespace (start of line after NL)", () => {
+    expect(ensureSpaceBeforeInsertIfNeeded("a\n", 2, "b")).toBe("b");
   });
 });
 

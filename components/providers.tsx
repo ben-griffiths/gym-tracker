@@ -7,6 +7,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { WebllmProvider } from "@/components/webllm/webllm-provider";
 import { WebllmInstallOverlay } from "@/components/webllm/webllm-install-overlay";
 import { SyncProvider } from "@/components/sync/sync-provider";
+import { UserStrengthSexProvider } from "@/components/profile/user-strength-sex-provider";
+import { UserWeightUnitProvider } from "@/components/profile/user-weight-unit-provider";
 
 type ProvidersProps = {
   children: ReactNode;
@@ -25,12 +27,16 @@ export function Providers({ children }: ProvidersProps) {
         storageKey="liftlog-theme"
         disableTransitionOnChange
       >
-        <SyncProvider>
-          <WebllmProvider>
-            {children}
-            <WebllmInstallOverlay />
-          </WebllmProvider>
-        </SyncProvider>
+        <UserStrengthSexProvider>
+          <UserWeightUnitProvider>
+            <SyncProvider>
+              <WebllmProvider>
+                {children}
+                <WebllmInstallOverlay />
+              </WebllmProvider>
+            </SyncProvider>
+          </UserWeightUnitProvider>
+        </UserStrengthSexProvider>
         <Toaster richColors position="top-center" />
       </ThemeProvider>
     </QueryClientProvider>

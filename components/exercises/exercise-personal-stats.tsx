@@ -6,10 +6,18 @@ import { Dumbbell } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
 import { getExerciseByName, searchExercises } from "@/lib/exercises";
-import { computeLiftProfiles, toKg } from "@/lib/lift-profiles";
+import { computeLiftProfiles } from "@/lib/lift-profiles";
 import { estimateOneRm, percentageOfOneRm } from "@/lib/rep-percentages";
 import { useHistoryGroups } from "@/lib/sync/workouts-live";
 import { flattenSets } from "@/lib/workout-history";
+import {
+  formatWeightKgForDisplay,
+  suffixForUnit,
+  toKg,
+  type WeightUnitPreference,
+} from "@/lib/weight-units";
+import { useUserStrengthSex } from "@/components/profile/user-strength-sex-provider";
+import { useUserWeightUnit } from "@/components/profile/user-weight-unit-provider";
 
 type ExercisePersonalStatsProps = {
   catalogSlug: string;
@@ -43,13 +51,15 @@ export function ExercisePersonalStats({ catalogSlug }: ExercisePersonalStatsProp
 
   const historyQuery = useHistoryGroups();
   const sessions = (historyQuery.data?.groups ?? []).flatMap((g) => g.sessions);
+  const { strengthSex } = useUserStrengthSex();
+  const { weightUnit } = useUserWeightUnit();
 
   const aggregated = useMemo(() => {
     let bestOneRmKg = 0;
     let bestDisplay: {
       reps: number;
       weight: number;
-      weightUnit: string;
+      weightUnit: WeightUnitPreference;
     } | null = null;
 
     const sessionIds = new Set<string>();
@@ -77,14 +87,16 @@ export function ExercisePersonalStats({ catalogSlug }: ExercisePersonalStatsProp
           bestDisplay = {
             reps,
             weight: numericWeight,
-            weightUnit: set.weightUnit ?? "kg",
+            weightUnit: (set.weightUnit === "lb"
+              ? "lb"
+              : "kg") as WeightUnitPreference,
           };
         }
       }
       if (touched) sessionIds.add(session.id);
     }
 
-    const profiles = computeLiftProfiles(sessions);
+    const profiles = computeLiftProfiles(sessions, strengthSex);
     const profile = profiles.find((p) => p.slug === catalogSlug) ?? null;
 
     return {
@@ -93,7 +105,7 @@ export function ExercisePersonalStats({ catalogSlug }: ExercisePersonalStatsProp
       bestSet: bestDisplay,
       profile,
     };
-  }, [sessions, catalogSlug]);
+  }, [sessions, catalogSlug, strengthSex]);
 
   if (authUserId === undefined) {
     return (
@@ -161,13 +173,7 @@ export function ExercisePersonalStats({ catalogSlug }: ExercisePersonalStatsProp
     aggregated.bestOneRmKg !== null
       ? aggregated.bestOneRmKg * pct8
       : null;
-  const displayUnit = aggregated.bestSet?.weightUnit ?? "kg";
-  const suggestDisplay =
-    suggestKg !== null
-      ? displayUnit === "lb"
-        ? suggestKg / 0.45359237
-        : suggestKg
-      : null;
+  const u = suffixForUnit(weightUnit);
 
   return (
     <section className="rounded-2xl border bg-card p-5 shadow-sm">
@@ -193,7 +199,7 @@ export function ExercisePersonalStats({ catalogSlug }: ExercisePersonalStatsProp
               Estimated 1RM
             </dt>
             <dd className="font-semibold tabular-nums">
-              {aggregated.bestOneRmKg.toFixed(1)} kg
+              {formatWeightKgForDisplay(aggregated.bestOneRmKg, weightUnit)} {u}
             </dd>
           </div>
         ) : null}
@@ -204,21 +210,25 @@ export function ExercisePersonalStats({ catalogSlug }: ExercisePersonalStatsProp
               Best logged set
             </dt>
             <dd className="font-semibold tabular-nums">
-              {aggregated.bestSet.weight}
-              {aggregated.bestSet.weightUnit === "lb" ? " lb" : " kg"} ×{" "}
-              {aggregated.bestSet.reps}
+              {formatWeightKgForDisplay(
+                toKg(
+                  aggregated.bestSet.weight,
+                  aggregated.bestSet.weightUnit,
+                ),
+                weightUnit,
+              )}{" "}
+              {u} × {aggregated.bestSet.reps}
             </dd>
           </div>
         ) : null}
 
-        {suggestDisplay !== null ? (
+        {suggestKg !== null ? (
           <div className="flex flex-col gap-0.5 rounded-xl bg-muted/40 px-3 py-2.5">
             <dt className="text-xs font-medium text-muted-foreground">
               Suggested ~8 @ RPE ~8
             </dt>
             <dd className="text-xs tabular-nums text-foreground">
-              ≈ {suggestDisplay.toFixed(displayUnit === "lb" ? 0 : 1)}
-              {displayUnit === "lb" ? " lb" : " kg"}{" "}
+              ≈ {formatWeightKgForDisplay(suggestKg, weightUnit)} {u}{" "}
               <span className="text-muted-foreground">
                 ({Math.round(pct8 * 100)}% est. 1RM)
               </span>

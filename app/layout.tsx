@@ -25,6 +25,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
+  colorScheme: "dark light",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f2f2f7" },
     { media: "(prefers-color-scheme: dark)", color: "#252525" },
@@ -55,7 +56,6 @@ export const metadata: Metadata = {
    * iOS caveat: the home screen icon is often cached at install time; after changing assets, users may
    * need to remove the shortcut and add it again (or clear Safari data) to see updates.
    */
-  colorScheme: "dark light",
   icons: {
     // Legacy .ico last resort (moved to /public so it is not auto-prepended ahead of themed SVGs).
     shortcut: [{ url: "/favicon.ico", type: "image/x-icon" }],

@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { CheckCircle2, ExternalLink, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ExerciseEmgSection } from "@/components/exercises/exercise-emg-section";
+import { ExerciseRepMaxesForSlug } from "@/components/exercises/exercise-rep-maxes-for-slug";
 import type {
   ExerciseGuideStep,
   ExerciseRecord,
@@ -109,19 +111,26 @@ export function ExerciseGuideSheet({
           <div className="flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]">
             <div className="space-y-5 px-4 pb-6 pt-4">
               {!guide ? (
-                <div className="rounded-2xl border border-dashed bg-muted/40 p-4 text-sm text-muted-foreground">
-                  No how-to guide available for {exercise.name} yet. Check the{" "}
-                  <a
-                    className="font-medium underline-offset-2 hover:underline"
-                    href={exercise.pageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={interceptOfflineNav}
-                  >
-                    standards page
-                  </a>
-                  .
-                </div>
+                <>
+                  <div className="rounded-2xl border border-dashed bg-muted/40 p-4 text-sm text-muted-foreground">
+                    No how-to guide available for {exercise.name} yet. Check the{" "}
+                    <a
+                      className="font-medium underline-offset-2 hover:underline"
+                      href={exercise.pageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={interceptOfflineNav}
+                    >
+                      standards page
+                    </a>
+                    .
+                  </div>
+                  <ExerciseEmgSection
+                    slug={exercise.slug}
+                    variant="embedded"
+                  />
+                  <ExerciseRepMaxesForSlug slug={exercise.slug} />
+                </>
               ) : (
                 <>
                   {guide.intro ? (
@@ -129,6 +138,10 @@ export function ExerciseGuideSheet({
                       {guide.intro}
                     </p>
                   ) : null}
+
+                  <ExerciseEmgSection slug={exercise.slug} variant="embedded" />
+
+                  <ExerciseRepMaxesForSlug slug={exercise.slug} />
 
                   {guide.formCheck.length > 0 ? (
                     <div className="space-y-2">

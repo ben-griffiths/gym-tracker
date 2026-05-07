@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { ExerciseRecord } from "@/lib/exercises";
-import type { ExerciseWeightCandidate, SetDetail } from "@/lib/types/workout";
+import type {
+  ExerciseWeightCandidate,
+  SetDetail,
+  WorkoutChatLocalParse,
+} from "@/lib/types/workout";
 
 /**
  * In-memory chat line items for the workout page (mirrors the page's Message union).
@@ -11,6 +15,7 @@ export type WorkoutChatMessage =
       kind: "text";
       role: "user" | "assistant" | "system";
       text: string;
+      localParse?: WorkoutChatLocalParse;
     }
   | { id: string; kind: "camera-image"; role: "user"; imageUrl: string }
   | { id: string; kind: "exercise-block"; role: "assistant"; blockId: string }
@@ -75,6 +80,16 @@ const serializedTextSchema = z.object({
   kind: z.literal("text"),
   role: z.enum(["user", "assistant", "system"]),
   text: z.string(),
+  localParse: z
+    .object({
+      skippedLlm: z.literal(true),
+      kind: z.enum(["regex", "suggest"]),
+      matchedPattern: z.string().optional(),
+      usedSuggestions: z.boolean().optional(),
+      primitives: z.unknown().optional(),
+    })
+    .passthrough()
+    .optional(),
 });
 
 const serializedCameraSchema = z.object({
@@ -131,6 +146,7 @@ function serializeOne(
         kind: "text",
         role: message.role,
         text: message.text,
+        ...(message.localParse ? { localParse: message.localParse } : {}),
       };
     case "camera-image":
       return {
@@ -221,6 +237,7 @@ export function deserializeWorkoutChatMessages(
           kind: "text",
           role: entry.role,
           text: entry.text,
+          ...(entry.localParse ? { localParse: entry.localParse } : {}),
         });
         break;
       case "camera-image":

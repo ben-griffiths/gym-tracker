@@ -10,8 +10,9 @@ import {
 } from "@/lib/rep-maxes";
 import type { HistorySession } from "@/lib/workout-history";
 
-/** Bench Press `standards`: male intermediate 98 kg, female 51 kg → neutral (98+51)/2 in kg. */
-const BENCH_NEUTRAL_INTERMEDIATE_KG = (98 + 51) / 2;
+/** Bench Press fixture: male intermediate 98 kg, female intermediate 51 kg */
+const BENCH_MALE_INTERMEDIATE_KG = 98;
+const BENCH_FEMALE_INTERMEDIATE_KG = 51;
 
 function dataRowsOnly(items: RepMaxTableItem[]): RepMaxRow[] {
   return items
@@ -20,15 +21,24 @@ function dataRowsOnly(items: RepMaxTableItem[]): RepMaxRow[] {
 }
 
 describe("catalogIntermediateOneRmKg", () => {
-  it("uses neutral average of male/female intermediate (Bench Press fixture)", () => {
+  it("uses male intermediate tier by default when available (Bench Press fixture)", () => {
     const bench = getExerciseBySlug("bench-press");
     expect(bench).not.toBeNull();
-    expect(catalogIntermediateOneRmKg(bench!)).toBe(BENCH_NEUTRAL_INTERMEDIATE_KG);
+    expect(catalogIntermediateOneRmKg(bench!, "male")).toBe(BENCH_MALE_INTERMEDIATE_KG);
+    expect(catalogIntermediateOneRmKg(bench!)).toBe(BENCH_MALE_INTERMEDIATE_KG);
+  });
+
+  it("uses female intermediate when requested", () => {
+    const bench = getExerciseBySlug("bench-press");
+    expect(bench).not.toBeNull();
+    expect(catalogIntermediateOneRmKg(bench!, "female")).toBe(
+      BENCH_FEMALE_INTERMEDIATE_KG,
+    );
   });
 });
 
 describe("buildRepMaxRows", () => {
-  it("lists every catalog exercise once with no sessions (catalog order: Est 1RM desc, nulls last, then name)", () => {
+  it("lists every catalog exercise once with no sessions (order: popularity, then Est 1RM, nulls last, then name)", () => {
     const items = buildRepMaxRows([]);
     expect(items.some((i) => i.kind === "separator")).toBe(false);
     const rows = dataRowsOnly(items);
@@ -42,8 +52,15 @@ describe("buildRepMaxRows", () => {
     const bench = dataRowsOnly(items).find((r) => r.slug === "bench-press");
     expect(bench).toBeDefined();
     expect(bench!.estimateKind).toBe("catalog");
-    expect(bench!.estimatedOneRm).toBe(BENCH_NEUTRAL_INTERMEDIATE_KG);
+    expect(bench!.estimatedOneRm).toBe(BENCH_MALE_INTERMEDIATE_KG);
     expect(bench!.estimateSource).toBeNull();
+  });
+
+  it("uses female catalog intermediate when sex is female", () => {
+    const items = buildRepMaxRows([], "female");
+    const bench = dataRowsOnly(items).find((r) => r.slug === "bench-press");
+    expect(bench?.estimateKind).toBe("catalog");
+    expect(bench!.estimatedOneRm).toBe(BENCH_FEMALE_INTERMEDIATE_KG);
   });
 
   it("keeps logged catalog lifts once and drops them from the catalog tail", () => {
@@ -177,6 +194,33 @@ describe("compareRowsWithLoggedDataDesc", () => {
 });
 
 describe("compareCatalogOnlyRowsDesc", () => {
+  it("orders a more popular lift ahead of a higher catalog Est 1RM", () => {
+    const bench: RepMaxRow = {
+      slug: "bench-press",
+      exerciseName: "Bench Press",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: 80,
+      estimateSource: null,
+      estimateKind: "catalog",
+      bestBodyweightReps: null,
+    };
+    const arnold: RepMaxRow = {
+      slug: "arnold-press",
+      exerciseName: "Arnold Press",
+      iconPath: null,
+      maxes: {},
+      bestWeight: 0,
+      estimatedOneRm: 300,
+      estimateSource: null,
+      estimateKind: "catalog",
+      bestBodyweightReps: null,
+    };
+    expect(compareCatalogOnlyRowsDesc(bench, arnold)).toBeLessThan(0);
+    expect(compareCatalogOnlyRowsDesc(arnold, bench)).toBeGreaterThan(0);
+  });
+
   it("orders higher catalog Est 1RM first", () => {
     const hi = {
       slug: "a",
