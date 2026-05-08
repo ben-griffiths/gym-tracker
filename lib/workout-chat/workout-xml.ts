@@ -753,6 +753,24 @@ export function tryDeterministicWorkoutXml(
     return buildDeterministicLogNewXml({ sets, reps, weight, u });
   }
 
+  // "bench press 5 sets of 5" / "bench 3 sets of 12 @ 80kg" (weight optional; "reps" optional)
+  mw = t.match(
+    /^(.+?)\s+(\d+)\s*sets?\s+of\s+(\d+)(?:\s*reps?)?(?:\s+(?:@\s*)?(\d+(?:\.\d+)?)\s*(kg|lb|kgs|lbs)?)?\s*$/iu,
+  );
+  if (mw) {
+    const sets = Number(mw[2]!);
+    const reps = Number(mw[3]!);
+    const weightRaw = mw[4];
+    const weight =
+      weightRaw !== undefined && weightRaw !== "" ? Number(weightRaw) : null;
+    const u = (parseUnitToken(mw[5]) as WeightUnit | undefined) ?? defaultUnit;
+    if (!Number.isInteger(sets) || sets < 1 || sets > MAX_WORKOUT_SET_ROWS)
+      return null;
+    if (!Number.isInteger(reps) || reps < 1 || reps > 100) return null;
+    if (weight != null && (!Number.isFinite(weight) || weight < 0)) return null;
+    return buildDeterministicLogNewXml({ sets, reps, weight, u });
+  }
+
   return null;
 }
 

@@ -224,7 +224,9 @@ export function Composer({
     "min-w-0 w-full flex-1 bg-transparent outline-none placeholder:text-muted-foreground/70",
   );
 
-  const formLocked = Boolean(disabled || busy || isLoading);
+  const inputLocked = Boolean(disabled);
+  /** Sending or parent loading: block submit / camera / chips, but leave the field typeable for the next message. */
+  const sendFlowLocked = Boolean(disabled || busy || isLoading);
   const showSendSpinner = busy || Boolean(isLoading);
   const suggestionLive = suggestions.length > 0 ? suggestions : [];
 
@@ -287,17 +289,20 @@ export function Composer({
     event.preventDefault();
     if (!text.trim() || busy || disabled || isLoading) return;
 
+    const toSend = text.trim();
     setBusy(true);
+    // Clear immediately so the next message can be typed while `onSubmit` runs.
+    if (controlled && onComposerActivity) {
+      onComposerActivity({ text: "", caret: 0, source: "typing" });
+    } else {
+      setInternalText("");
+    }
+    caretRestoreRef.current = 0;
+    setDisplayCaret(0);
+    onSuggestionsDismiss?.();
+
     try {
-      await onSubmit(text.trim());
-      if (controlled && onComposerActivity) {
-        onComposerActivity({ text: "", caret: 0, source: "typing" });
-      } else {
-        setInternalText("");
-      }
-      caretRestoreRef.current = 0;
-      setDisplayCaret(0);
-      onSuggestionsDismiss?.();
+      await onSubmit(toSend);
     } finally {
       setBusy(false);
     }
@@ -307,7 +312,7 @@ export function Composer({
     sourceEl: HTMLInputElement | null,
     item: WorkoutChatSuggestionItem,
   ) {
-    if (formLocked) return;
+    if (sendFlowLocked) return;
     if (sourceEl?.dataset.composing === "1") return;
     const el = sourceEl ?? inputRef.current;
     const caret = el?.selectionStart ?? text.length;
@@ -398,7 +403,7 @@ export function Composer({
       type="button"
       variant="ghost"
       size="icon"
-      disabled={formLocked}
+      disabled={sendFlowLocked}
       className="h-10 w-10 shrink-0 rounded-full text-muted-foreground hover:bg-background"
       aria-label="Open camera"
     >
@@ -420,7 +425,7 @@ export function Composer({
           key={`${s.kind}-${s.label}-${i}`}
           type="button"
           role="option"
-          disabled={formLocked}
+          disabled={sendFlowLocked}
           onClick={(e) => {
             e.preventDefault();
             applySuggestion(inputRef.current, s);
@@ -514,7 +519,7 @@ export function Composer({
               if (mir) mir.scrollLeft = event.currentTarget.scrollLeft;
             }}
             placeholder={showMirror && text === "" ? "" : placeholder}
-            disabled={formLocked}
+            disabled={inputLocked}
             autoComplete="off"
             enterKeyHint="send"
             aria-autocomplete="list"
@@ -538,7 +543,7 @@ export function Composer({
         <Button
           type="submit"
           size="icon"
-          disabled={formLocked || !text.trim()}
+          disabled={sendFlowLocked || !text.trim()}
           className="h-10 w-10 shrink-0 rounded-full disabled:opacity-100"
           aria-label={showSendSpinner ? "Working" : "Send"}
           aria-busy={showSendSpinner}

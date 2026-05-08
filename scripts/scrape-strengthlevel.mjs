@@ -122,6 +122,250 @@ const STRENGTH_LEVEL_KEYS = [
   "elite",
 ];
 
+/** Bodyweight benchmarks are split differently from barbell kg tables. */
+function splitStandardsSexBlocks(html) {
+  // Canonical split heading is `<h2>…`; older pages occasionally used `<h3>`.
+  const maleRe =
+    /<h[1-6][^>]*>\s*Male\b[^<{]{3,240}Standards\s*<\/h[1-6]>/i;
+  const femaleRe =
+    /<h[1-6][^>]*>\s*Female\b[^<{]{3,240}Standards\s*<\/h[1-6]>/i;
+  const m = maleRe.exec(html);
+  const f = femaleRe.exec(html);
+  if (!m) return { male: null, female: null };
+  const maleStart = m.index;
+  const femaleStart = f ? f.index : html.length;
+  return {
+    male: html.slice(maleStart, femaleStart),
+    female: f ? html.slice(femaleStart) : null,
+  };
+}
+
+/** First tab-group block for titles like Entire Community. */
+function sliceTabGroup(html, title) {
+  const marker = `data-tab-group="${title}"`;
+  const idx = html.indexOf(marker);
+  if (idx === -1) return null;
+  return html.slice(idx, idx + 14_000);
+}
+
+function decodeHtmlCell(inner) {
+  return inner
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseStrengthLevelTdTbodyPairs(tbodyHtml, parseSecond) {
+  const out = {};
+  const rowRe =
+    /<tr>\s*<td>([^<]+)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
+  let row;
+  while ((row = rowRe.exec(tbodyHtml)) !== null) {
+    const levelKey = decodeHtmlCell(row[1]).trim().toLowerCase();
+    if (!STRENGTH_LEVEL_KEYS.includes(levelKey)) continue;
+    const value = parseSecond(row[2]);
+    if (value == null || !Number.isFinite(value)) continue;
+    out[levelKey] = value;
+  }
+  if (STRENGTH_LEVEL_KEYS.every((key) => typeof out[key] === "number")) {
+    return out;
+  }
+  return null;
+}
+
+function parseEntireCommunityRepsTierRow(cellHtml) {
+  const text = decodeHtmlCell(cellHtml);
+  if (/^<\s*1$/i.test(text)) return 0;
+  const numeric = Number(text.replace(/[^0-9.+-]/g, ""));
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function parseEntireCommunitySignedKgTierRow(cellHtml) {
+  const text = decodeHtmlCell(cellHtml).replace(/^\+/, "");
+  const m = text.match(/^(-?\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  return Number(m[1]);
+}
+
+function extractRepsCommunityTbody(blockHtml) {
+  const m = blockHtml.match(
+    /<thead>[\s\S]*?>Reps\s*<\/th>\s*<\/tr>\s*<\/thead>\s*<tbody>([\s\S]*?)<\/tbody>/i,
+  );
+  return m ? m[1] : null;
+}
+
+function extractOneRmCommunityTbody(blockHtml) {
+  const m = blockHtml.match(
+    /<thead>[\s\S]*?>1RM Weight\s*<\/th>\s*<\/tr>\s*<\/thead>\s*<tbody>([\s\S]*?)<\/tbody>/i,
+  );
+  return m ? m[1] : null;
+}
+
+function extractBodyweightMatricesForSex(sexHtml) {
+  const repsRegion = (() => {
+    const start = sexHtml.indexOf("Reps By Weight and Age");
+    if (start === -1) return null;
+    const kgEnd = sexHtml.indexOf(">1RM Weight (kg)<", start);
+    const lbEnd = sexHtml.indexOf(">1RM Weight (lb)<", start);
+    let end =
+      kgEnd !== -1
+        ? kgEnd
+        : lbEnd !== -1
+          ? lbEnd
+          : sexHtml.length;
+    if (end === -1) end = sexHtml.length;
+    return sexHtml.slice(start, end);
+  })();
+
+  const oneRmKgStart = sexHtml.indexOf(">1RM Weight (kg)<");
+  const oneRmLbStart = sexHtml.indexOf(">1RM Weight (lb)<");
+  const oneRmSliceStart =
+    oneRmKgStart !== -1
+      ? oneRmKgStart
+      : oneRmLbStart !== -1
+        ? oneRmLbStart
+        : -1;
+  const oneRmRegion =
+    oneRmSliceStart === -1
+      ? null
+      : sexHtml.slice(oneRmSliceStart);
+
+  let repsMatrixTbody = null;
+  if (repsRegion) {
+    const m = repsRegion.match(
+      /<h4[^>]*>\s*By Bodyweight\s*<\/h4>\s*<div class="table-container">[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/i,
+    );
+    repsMatrixTbody = m ? m[1] : null;
+  }
+
+  let oneRmMatrixTbody = null;
+  if (oneRmRegion) {
+    const m = oneRmRegion.match(
+      /<h4[^>]*>\s*By Bodyweight\s*<\/h4>\s*<div class="table-container">[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/i,
+    );
+    oneRmMatrixTbody = m ? m[1] : null;
+  }
+
+  return { repsMatrixTbody, oneRmMatrixTbody };
+}
+
+function parseBwGridRepsRows(tbodyHtml) {
+  const rows = [];
+  const trRe = /<tr>\s*([\s\S]*?)<\/tr>/gi;
+  let tr;
+  while ((tr = trRe.exec(tbodyHtml)) !== null) {
+    const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    const cells = [];
+    let tm;
+    while ((tm = tdRe.exec(tr[1])) !== null) {
+      cells.push(tm[1]);
+    }
+    if (cells.length < 6) continue;
+    const bw = Number(decodeHtmlCell(cells[0]));
+    if (!Number.isFinite(bw)) continue;
+    const tierNums = cells.slice(1, 6).map((c) => {
+      const inner = decodeHtmlCell(c);
+      if (/^<\s*1$/i.test(inner)) return 0;
+      const n = Number(inner.replace(/[^0-9.+-]/g, ""));
+      return Number.isFinite(n) ? n : 0;
+    });
+    rows.push({
+      bodyweightKg: bw,
+      beginner: tierNums[0],
+      novice: tierNums[1],
+      intermediate: tierNums[2],
+      advanced: tierNums[3],
+      elite: tierNums[4],
+    });
+  }
+  return rows.length ? rows : null;
+}
+
+function parseBwGridSignedKgRows(tbodyHtml) {
+  const rows = [];
+  const trRe = /<tr>\s*([\s\S]*?)<\/tr>/gi;
+  let tr;
+  while ((tr = trRe.exec(tbodyHtml)) !== null) {
+    const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    const cells = [];
+    let tm;
+    while ((tm = tdRe.exec(tr[1])) !== null) {
+      cells.push(tm[1]);
+    }
+    if (cells.length < 6) continue;
+    const bw = Number(decodeHtmlCell(cells[0]));
+    if (!Number.isFinite(bw)) continue;
+    const tierNums = cells.slice(1, 6).map((c) => {
+      const text = decodeHtmlCell(c).replace(/^\+/, "");
+      const m = text.match(/^(-?\d+(?:\.\d+)?)/);
+      return m ? Number(m[1]) : NaN;
+    });
+    if (tierNums.some((n) => !Number.isFinite(n))) continue;
+    rows.push({
+      bodyweightKg: bw,
+      beginner: tierNums[0],
+      novice: tierNums[1],
+      intermediate: tierNums[2],
+      advanced: tierNums[3],
+      elite: tierNums[4],
+    });
+  }
+  return rows.length ? rows : null;
+}
+
+function parseBodyweightSexStandards(sexHtml) {
+  const entireBlock = sliceTabGroup(sexHtml, "Entire Community");
+  if (!entireBlock) return null;
+  const repsTbody = extractRepsCommunityTbody(entireBlock);
+  if (!repsTbody) return null;
+
+  const entireRepsByTier = parseStrengthLevelTdTbodyPairs(
+    repsTbody,
+    parseEntireCommunityRepsTierRow,
+  );
+  if (!entireRepsByTier) return null;
+
+  const oneRmTbody = extractOneRmCommunityTbody(entireBlock);
+  const entireOneRmAddedKgByTier = oneRmTbody
+    ? parseStrengthLevelTdTbodyPairs(
+        oneRmTbody,
+        parseEntireCommunitySignedKgTierRow,
+      )
+    : null;
+
+  const { repsMatrixTbody, oneRmMatrixTbody } =
+    extractBodyweightMatricesForSex(sexHtml);
+
+  const repsByBodyweightKg = repsMatrixTbody
+    ? parseBwGridRepsRows(repsMatrixTbody)
+    : null;
+  const oneRmAddedKgByBodyweight = oneRmMatrixTbody
+    ? parseBwGridSignedKgRows(oneRmMatrixTbody)
+    : null;
+
+  return {
+    entireCommunityRepsByTier: entireRepsByTier,
+    entireCommunityOneRmAddedKgByTier: entireOneRmAddedKgByTier,
+    repsByBodyweightKg,
+    oneRmAddedKgByBodyweight,
+  };
+}
+
+function parseBodyweightStandards(html) {
+  const blocks = splitStandardsSexBlocks(html);
+  if (!blocks.male) return null;
+
+  const male = parseBodyweightSexStandards(blocks.male);
+  const female = blocks.female
+    ? parseBodyweightSexStandards(blocks.female)
+    : null;
+  if (!male && !female) return null;
+  return { male, female };
+}
+
 function parseLevelWeightRows(tbodyHtml) {
   const out = {};
   const rowRegex = /<tr>\s*<td>([^<]+)<\/td>\s*<td[^>]*>([^<]+)<\/td>\s*<\/tr>/gi;
@@ -154,18 +398,29 @@ function parseSexWeightStandards(html, sex) {
   return parseLevelWeightRows(weightTabMatch[1]);
 }
 
-async function fetchStandards(slug) {
+export async function fetchStandards(slug) {
   // Force kg so we can compare directly to most logged weights in the app.
   const url = `https://strengthlevel.com/strength-standards/${slug}/kg`;
   const { text } = await fetchText(url);
-  const male = parseSexWeightStandards(text, "Male");
-  const female = parseSexWeightStandards(text, "Female");
-  if (!male && !female) return null;
+  const maleBar = parseSexWeightStandards(text, "Male");
+  const femaleBar = parseSexWeightStandards(text, "Female");
+  if (maleBar || femaleBar) {
+    return {
+      kind: "barbellOneRm",
+      unit: "kg",
+      sourceUrl: url,
+      male: maleBar,
+      female: femaleBar,
+    };
+  }
+  const body = parseBodyweightStandards(text);
+  if (!body) return null;
   return {
+    kind: "bodyweight",
     unit: "kg",
     sourceUrl: url,
-    male,
-    female,
+    male: body.male,
+    female: body.female,
   };
 }
 
@@ -357,6 +612,20 @@ async function fetchGuide(slug) {
 }
 
 async function main() {
+  const standardsOnlyRaw = process.argv.find((arg) =>
+    arg.startsWith("--standards-only="),
+  );
+  if (standardsOnlyRaw) {
+    const slug = standardsOnlyRaw.slice("--standards-only=".length).trim();
+    if (!slug) {
+      console.error("Missing slug after --standards-only=");
+      process.exit(1);
+    }
+    const standards = await fetchStandards(slug);
+    console.log(JSON.stringify(standards, null, 2));
+    process.exit(0);
+  }
+
   await mkdir(ICONS_DIR, { recursive: true });
   await mkdir(HOWTO_DIR, { recursive: true });
 
@@ -485,7 +754,14 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const SCRAPER_ENTRY = path.normalize(fileURLToPath(import.meta.url));
+const invokedDirectly =
+  typeof process.argv[1] === "string" &&
+  path.normalize(process.argv[1]) === SCRAPER_ENTRY;
+
+if (invokedDirectly) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

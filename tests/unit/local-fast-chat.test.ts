@@ -29,6 +29,28 @@ describe("tryWorkoutChatLocalFastPath", () => {
     expect(r!.localParse?.matchedPattern).toBe("log-new");
   });
 
+  it("parses N sets of M (natural phrasing)", () => {
+    const r = tryWorkoutChatLocalFastPath({
+      message: "Bench Press 5 sets of 5",
+      context: emptyContext,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.sets).toHaveLength(5);
+    expect(r!.sets.every((s) => s.reps === 5)).toBe(true);
+    expect(r!.autoResolvedExercise?.slug).toBe("bench-press");
+    expect(r!.localParse?.matchedPattern).toBe("log-new");
+  });
+
+  it("parses N sets of M with optional weight", () => {
+    const r = tryWorkoutChatLocalFastPath({
+      message: "bench 3 sets of 12 @ 80 kg",
+      context: emptyContext,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.sets).toHaveLength(3);
+    expect(r!.sets.every((s) => s.reps === 12 && s.weight === 80)).toBe(true);
+  });
+
   it("returns null when digits appear but no rule matches (incomplete prescription)", () => {
     const r = tryWorkoutChatLocalFastPath({
       message: "bench 5 reps 3 sets",

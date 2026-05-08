@@ -2,6 +2,8 @@ import {
   getExerciseByName,
   getExerciseBySlug,
   searchExercises,
+  isBodyweightExerciseStandards,
+  type ExerciseStandards,
 } from "@/lib/exercises";
 import type { UserStrengthSex } from "@/lib/user-strength-sex";
 import { estimateOneRm } from "@/lib/rep-percentages";
@@ -60,24 +62,21 @@ export function tierThresholdMap(thresholds: Thresholds): Record<StrengthTier, n
 
 /**
  * Prefer the thresholds for {@link sex}, then the other sex if that column is missing.
+ * Bodyweight standards (reps / added load) are not comparable to absolute kg
+ * barbell 1RM thresholds, so this returns null for those lifts.
  */
 export function thresholdsForStrengthSex(
-  standards: {
-    male: Thresholds | null;
-    female: Thresholds | null;
-  },
+  standards: ExerciseStandards,
   sex: UserStrengthSex,
 ): Thresholds | null {
+  if (isBodyweightExerciseStandards(standards)) return null;
   const primary = sex === "male" ? standards.male : standards.female;
   const fallback = sex === "male" ? standards.female : standards.male;
   return primary ?? fallback ?? null;
 }
 
 /** @deprecated Prefer {@link thresholdsForStrengthSex} with explicit sex */
-export function combineThresholds(standards: {
-  male: Thresholds | null;
-  female: Thresholds | null;
-}): Thresholds | null {
+export function combineThresholds(standards: ExerciseStandards): Thresholds | null {
   return thresholdsForStrengthSex(standards, "male");
 }
 

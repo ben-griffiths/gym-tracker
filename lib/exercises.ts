@@ -12,32 +12,64 @@ export type ExerciseGuide = {
   steps: ExerciseGuideStep[];
 };
 
+/** Five Strength Level tiers; used for kg 1RM, rep counts, or added load (BW). */
+export type StrengthStandardFiveTier = {
+  beginner: number;
+  novice: number;
+  intermediate: number;
+  advanced: number;
+  elite: number;
+};
+
+/** By-bodyweight Strength Level grids (BW row + tier columns). */
+export type BodyweightKgMatrixRow = StrengthStandardFiveTier & {
+  bodyweightKg: number;
+};
+
+/** Parsed male/female sections for bodyweight standards (calisthenics). */
+export type BodyweightSexStandardsParsed = {
+  entireCommunityRepsByTier: StrengthStandardFiveTier;
+  /** When Strength Level publishes a 1RM added-load column; omit on reps-only standards. */
+  entireCommunityOneRmAddedKgByTier: StrengthStandardFiveTier | null;
+  repsByBodyweightKg: BodyweightKgMatrixRow[] | null;
+  oneRmAddedKgByBodyweight: BodyweightKgMatrixRow[] | null;
+};
+
+export type BarbellExerciseStandards = {
+  kind?: "barbellOneRm";
+  unit: "kg" | "lb";
+  sourceUrl: string;
+  male: StrengthStandardFiveTier | null;
+  female: StrengthStandardFiveTier | null;
+};
+
+export type BodyweightExerciseStandards = {
+  kind: "bodyweight";
+  unit: "kg";
+  sourceUrl: string;
+  male: BodyweightSexStandardsParsed | null;
+  female: BodyweightSexStandardsParsed | null;
+};
+
+export type ExerciseStandards =
+  | BarbellExerciseStandards
+  | BodyweightExerciseStandards;
+
 export type ExerciseRecord = {
   slug: string;
   name: string;
   category: string | null;
   iconPath: string;
   pageUrl: string;
-  standards?: {
-    unit: "kg" | "lb";
-    sourceUrl: string;
-    male: {
-      beginner: number;
-      novice: number;
-      intermediate: number;
-      advanced: number;
-      elite: number;
-    } | null;
-    female: {
-      beginner: number;
-      novice: number;
-      intermediate: number;
-      advanced: number;
-      elite: number;
-    } | null;
-  } | null;
+  standards?: ExerciseStandards | null;
   guide: ExerciseGuide | null;
 };
+
+export function isBodyweightExerciseStandards(
+  s: ExerciseStandards | null | undefined,
+): s is BodyweightExerciseStandards {
+  return s != null && s.kind === "bodyweight";
+}
 
 type ExercisesFile = {
   source: string;

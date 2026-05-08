@@ -1,7 +1,7 @@
 "use client";
 
-import { cn } from "@/lib/utils";
 import { useUserWeightUnit } from "@/components/profile/user-weight-unit-provider";
+import { cn } from "@/lib/utils";
 
 const OPTIONS = [
   { value: "kg" as const, label: "kg" },

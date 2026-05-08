@@ -2,6 +2,7 @@ import {
   EXERCISES,
   type ExerciseRecord,
   getExerciseByName,
+  isBodyweightExerciseStandards,
   searchExercises,
 } from "@/lib/exercises";
 import { toKg } from "@/lib/lift-profiles";
@@ -49,15 +50,16 @@ type Agg = {
  * Uses the StrengthLevel column for {@link sex}; if intermediate is missing there,
  * falls back to the opposite column. Converts to kg when `standards.unit` is `lb`.
  *
- * Returns `null` when standards are missing or neither side defines intermediate —
- * typical for bodyweight-only entries with no load numbers.
+ * Returns `null` when standards are missing, neither side defines intermediate,
+ * or the exercise uses bodyweight-relative standards (reps / ±kg at 1RM) rather
+ * than a single kg 1RM column.
  */
 export function catalogIntermediateOneRmKg(
   exercise: ExerciseRecord,
   sex: UserStrengthSex = "male",
 ): number | null {
   const std = exercise.standards;
-  if (!std) return null;
+  if (!std || isBodyweightExerciseStandards(std)) return null;
   const m = std.male?.intermediate;
   const f = std.female?.intermediate;
   const unit = std.unit === "lb" ? "lb" : "kg";
